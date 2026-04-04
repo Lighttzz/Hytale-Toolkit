@@ -2202,11 +2202,14 @@ def decompile_server(install_path: str, ram_gb: int = 8) -> bool:
     print("  Decompiling... (this may take several minutes)")
     print()
 
+    # Cap threads to avoid OOM - Vineflower defaults to 16 threads
+    thread_count = max(1, min(4, ram_gb // 2))
     cmd = [
         "java",
         "-Xms2G",
         f"-Xmx{ram_gb}G",
         "-jar", str(VINEFLOWER_JAR),
+        f"-thr={thread_count}",  # Limit threads to prevent OOM
         "-dgs=1",
         "-asc=1",
         "-rsy=1",

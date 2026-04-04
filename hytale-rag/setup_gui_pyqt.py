@@ -166,9 +166,6 @@ GITHUB_REPO = "logan-mcduffie/Hytale-Toolkit"
 RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 
-# CDN for database downloads
-CDN_BASE_URL = "https://cdn.loganmcduffie.com"
-
 
 def compare_versions(current: str, latest: str) -> int:
     """
@@ -231,7 +228,7 @@ class UpdateDialog(QDialog):
         super().__init__(parent)
         self.update_info = update_info
         self.setWindowTitle("Update Available")
-        self.setFixedSize(450, 300)
+        self.setFixedSize(540, 360)
 
         # Set window icon (check PyInstaller bundle first)
         if getattr(_sys, '_MEIPASS', None):
@@ -318,7 +315,7 @@ class UpdateDialog(QDialog):
                     height: 0px;
                 }
             """)
-            scroll_area.setMaximumHeight(140)
+            scroll_area.setMaximumHeight(168)
             layout.addWidget(scroll_area)
 
         layout.addStretch()
@@ -621,7 +618,7 @@ class SidebarWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(180)
+        self.setFixedWidth(216)
         self.background_pixmap = None
         self.current_step = 0
         self.steps = [
@@ -1089,6 +1086,7 @@ class HytalePathPage(QWidget):
             # Windows common paths - Hytale Launcher paths first
             common_paths = [
                 # Hytale Launcher default install locations
+                Path(os.environ.get("APPDATA", "")) / "Hytale" / "install" / "release" / "package" / "game" / "latest",
                 Path("D:/Roaming/install/release/package/game/latest"),
                 Path("C:/Roaming/install/release/package/game/latest"),
                 Path("E:/Roaming/install/release/package/game/latest"),
@@ -1133,6 +1131,8 @@ class HytalePathPage(QWidget):
                 if client_dir.exists() or server_dir.exists() or assets_file.exists():
                     self.hytale_input.setText(str(path))
                     return
+
+
 
     def browse_hytale(self):
         """Open folder browser for Hytale path."""
@@ -2470,10 +2470,13 @@ class DecompilePage(QWidget):
             self._process.setProcessEnvironment(clean_env)
 
         # Build command
+        # Cap threads to avoid OOM - Vineflower defaults to 16 threads
+        thread_count = max(1, min(4, ram_gb // 2))
         args = [
             "-Xms2G",
             f"-Xmx{ram_gb}G",
             "-jar", str(vineflower_jar),
+            f"-thr={thread_count}",  # Limit threads to prevent OOM
             "-dgs=1",  # Decompile generic signatures
             "-asc=1",  # ASCII string characters
             "-rsy=1",  # Remove synthetic class members
@@ -4115,11 +4118,91 @@ class ProviderPage(QWidget):
         return self._state
 
 
+class DatabaseSourceCard(QFrame):
+    """A clickable card for database source selection."""
+
+    def __init__(self, title: str, badge: str, badge_color: str, features: list, recommended: bool = False, parent=None):
+        super().__init__(parent)
+        self._selected = False
+        self._badge_color = badge_color
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(160, 185)
+        self._click_callback = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(5)
+
+        # Header
+        header = QHBoxLayout()
+        self.name_label = QLabel(title)
+        self.name_label.setStyleSheet("font-size: 13px; font-weight: bold; color: white; background: transparent;")
+        header.addWidget(self.name_label)
+        header.addStretch()
+        self.badge_label = QLabel(badge)
+        header.addWidget(self.badge_label)
+        layout.addLayout(header)
+
+        if recommended:
+            rec = QLabel("Recommended")
+            rec.setStyleSheet("font-size: 10px; color: #22C55E; font-weight: bold; background: transparent;")
+            layout.addWidget(rec)
+        else:
+            layout.addSpacing(12)
+
+        layout.addSpacing(4)
+        for feat in features:
+            fl = QLabel(f"•  {feat}")
+            fl.setStyleSheet("font-size: 10px; color: #999999; background: transparent;")
+            fl.setWordWrap(True)
+            layout.addWidget(fl)
+        layout.addStretch()
+        self._update_style()
+
+    def setSelected(self, selected: bool):
+        self._selected = selected
+        self._update_style()
+
+    def isSelected(self) -> bool:
+        return self._selected
+
+    def _update_style(self):
+        if self._selected:
+            self.setStyleSheet("DatabaseSourceCard { background-color: #2a2a2a; border: 2px solid #3498db; border-radius: 10px; }")
+            self.badge_label.setStyleSheet(
+                f"font-size: 10px; color: {self._badge_color}; background-color: {self._badge_color}25; "
+                f"padding: 3px 8px; border-radius: 4px; font-weight: bold;"
+            )
+        else:
+            self.setStyleSheet(
+                "DatabaseSourceCard { background-color: #1e1e1e; border: 2px solid #333333; border-radius: 10px; }"
+            )
+            self.badge_label.setStyleSheet(
+                f"font-size: 10px; color: {self._badge_color}; background-color: {self._badge_color}20; "
+                f"padding: 3px 8px; border-radius: 4px; font-weight: bold;"
+            )
+
+    def enterEvent(self, event):
+        if not self._selected:
+            self.setStyleSheet("DatabaseSourceCard { background-color: #252525; border: 2px solid #444444; border-radius: 10px; }")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._update_style()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, _event):
+        if self._click_callback:
+            self._click_callback(self)
+
+
 class DatabasePage(QWidget):
-    """Page for database setup with terminal output."""
+    """Page for database setup with CDN / Local / Build modes and optional custom docs."""
 
     # Signals for state changes
     state_changed = pyqtSignal(str)  # idle, running, completed, failed
+
+    _DB_TABLES = ["hytale_methods.lance", "hytale_client_ui.lance", "hytale_gamedata.lance", "hytale_docs.lance"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4130,29 +4213,29 @@ class DatabasePage(QWidget):
         self._toolkit_path = None
         self._provider = None
         self._log_file_path = None
-        self._has_existing = False
-        self._use_existing = True
+        self._mode = "build"  # local, build
+        self._local_db_path = ""
+        self._custom_docs_path = ""
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(40, 40, 40, 30)
+        layout.setContentsMargins(40, 30, 40, 20)
 
         # Title
-        self.title = QLabel("Download Search Database")
+        self.title = QLabel("Install Search Database")
         self.title.setStyleSheet("font-size: 22px; font-weight: bold; color: white;")
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.title)
 
         # Description
         self.desc = QLabel(
-            "Download the pre-built vector database for semantic code search.\n"
-            "This contains indexed embeddings for fast Hytale code lookup."
+            "Choose how to set up the vector database for semantic code search."
         )
         self.desc.setStyleSheet("color: #aaaaaa; font-size: 13px;")
         self.desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.desc.setWordWrap(True)
         layout.addWidget(self.desc)
 
-        layout.addSpacing(20)
+        layout.addSpacing(15)
 
         # Stacked widget for settings/terminal views
         self.stack = QStackedWidget()
@@ -4161,148 +4244,152 @@ class DatabasePage(QWidget):
         # ===== Settings View (index 0) =====
         self.settings_view = QWidget()
         settings_layout = QVBoxLayout(self.settings_view)
-        settings_layout.setContentsMargins(0, 10, 0, 0)
-        settings_layout.setSpacing(15)
+        settings_layout.setContentsMargins(0, 5, 0, 0)
+        settings_layout.setSpacing(12)
 
-        # ===== Main Card =====
-        self.main_card = QFrame()
-        self.main_card.setFixedWidth(240)
-        self.main_card.setStyleSheet("""
-            QFrame#dbCard {
-                background-color: #2a2a2a;
-                border: 2px solid #3498db;
-                border-radius: 10px;
-            }
-        """)
-        self.main_card.setObjectName("dbCard")
-        card_layout = QVBoxLayout(self.main_card)
-        card_layout.setContentsMargins(18, 15, 18, 15)
-        card_layout.setSpacing(6)
+        # --- Mode cards row ---
+        cards_container = QWidget()
+        cards_layout = QHBoxLayout(cards_container)
+        cards_layout.setSpacing(20)
+        cards_layout.setContentsMargins(4, 4, 4, 4)
 
-        # Header row with title and badge
-        header = QHBoxLayout()
-        card_title = QLabel("Vector Database")
-        card_title.setStyleSheet("font-size: 15px; font-weight: bold; color: white; background: transparent;")
-        header.addWidget(card_title)
-        header.addStretch()
+        self.local_card = DatabaseSourceCard(
+            "Local Database", "Disk", "#F59E0B",
+            ["Use existing LanceDB", "No download needed", "Point to folder"],
+        )
+        self.build_card = DatabaseSourceCard(
+            "Build Locally", "CPU", "#9b59b6",
+            ["Run ingest pipeline", "15-30 min build time", "Full control"],
+        )
 
+        for card in (self.local_card, self.build_card):
+            card._click_callback = self._on_card_clicked
+            cards_layout.addWidget(card)
+
+        # Center the cards
+        center_container = QWidget()
+        center_layout = QHBoxLayout(center_container)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.addStretch()
+        center_layout.addWidget(cards_container)
+        center_layout.addStretch()
+        settings_layout.addWidget(center_container)
+
+        # --- Provider badge ---
         self.provider_badge = QLabel("Voyage")
+        self.provider_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.provider_badge.setStyleSheet(
             "font-size: 10px; color: #3498db; background-color: #3498db25; "
             "padding: 3px 8px; border-radius: 4px; font-weight: bold;"
         )
-        header.addWidget(self.provider_badge)
-        card_layout.addLayout(header)
+        badge_row = QWidget()
+        badge_layout = QHBoxLayout(badge_row)
+        badge_layout.setContentsMargins(0, 0, 0, 0)
+        badge_layout.addStretch()
+        badge_layout.addWidget(self.provider_badge)
+        badge_layout.addStretch()
+        settings_layout.addWidget(badge_row)
 
-        # Size subtitle
-        size_label = QLabel("~50-100 MB download")
-        size_label.setStyleSheet("font-size: 11px; color: #22C55E; font-weight: bold; background: transparent;")
-        card_layout.addWidget(size_label)
+        # --- Local DB folder picker (hidden by default) ---
+        self.local_picker = QWidget()
+        self.local_picker.hide()
+        local_layout = QVBoxLayout(self.local_picker)
+        local_layout.setContentsMargins(0, 0, 0, 0)
+        local_layout.setSpacing(6)
 
-        # Hytale version label (populated dynamically)
-        self.version_label = QLabel("Hytale Version: Loading...")
-        self.version_label.setStyleSheet("font-size: 11px; color: #888888; background: transparent;")
-        card_layout.addWidget(self.version_label)
+        local_header = QLabel("LanceDB Folder")
+        local_header.setStyleSheet("font-size: 13px; font-weight: bold; color: white;")
+        local_layout.addWidget(local_header)
 
-        card_layout.addSpacing(8)
+        local_hint = QLabel("Select a folder containing .lance table directories")
+        local_hint.setStyleSheet("font-size: 11px; color: #888888;")
+        local_layout.addWidget(local_hint)
 
-        # Feature list
-        features = [
-            "Pre-indexed code embeddings",
-            "Enables semantic search",
-            "One-time download",
-            "Required for code lookup",
-        ]
-        for feature in features:
-            feat_label = QLabel(f"•  {feature}")
-            feat_label.setStyleSheet("font-size: 11px; color: #999999; background: transparent;")
-            card_layout.addWidget(feat_label)
+        local_row = QWidget()
+        local_row_layout = QHBoxLayout(local_row)
+        local_row_layout.setContentsMargins(0, 0, 0, 0)
+        local_row_layout.setSpacing(8)
 
-        # Center the card
-        card_center = QWidget()
-        card_center_layout = QHBoxLayout(card_center)
-        card_center_layout.setContentsMargins(0, 0, 0, 0)
-        card_center_layout.addStretch()
-        card_center_layout.addWidget(self.main_card)
-        card_center_layout.addStretch()
-        settings_layout.addWidget(card_center)
+        self.local_input = QLineEdit()
+        self.local_input.setPlaceholderText("Select LanceDB folder...")
+        self.local_input.setStyleSheet(
+            "QLineEdit { background-color: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; "
+            "padding: 8px 10px; font-size: 12px; color: white; } "
+            "QLineEdit:focus { border-color: #3498db; }"
+        )
+        self.local_input.textChanged.connect(self._validate_local_db)
+        local_row_layout.addWidget(self.local_input)
 
-        # ===== Existing Database Options (hidden by default) =====
-        self.existing_options = QWidget()
-        self.existing_options.hide()
-        existing_layout = QVBoxLayout(self.existing_options)
-        existing_layout.setContentsMargins(0, 0, 0, 0)
-        existing_layout.setSpacing(10)
+        local_browse = QPushButton("Browse")
+        local_browse.setStyleSheet(
+            "QPushButton { background-color: #1f6aa5; padding: 8px 14px; border-radius: 6px; font-size: 12px; } "
+            "QPushButton:hover { background-color: #2980b9; }"
+        )
+        local_browse.clicked.connect(self._browse_local_db)
+        local_row_layout.addWidget(local_browse)
 
-        self.existing_label = QLabel("✓ Existing database found")
-        self.existing_label.setStyleSheet("font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 13px; font-weight: bold; color: #22C55E;")
-        self.existing_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        existing_layout.addWidget(self.existing_label)
+        local_layout.addWidget(local_row)
 
-        # Update available warning (hidden by default)
-        self.update_warning_label = QLabel("")
-        self.update_warning_label.setStyleSheet("font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 12px; font-weight: bold; color: #F59E0B;")
-        self.update_warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.update_warning_label.hide()
-        existing_layout.addWidget(self.update_warning_label)
+        self.local_status = QLabel("")
+        self.local_status.setStyleSheet("font-size: 11px;")
+        local_layout.addWidget(self.local_status)
 
-        # Option buttons
-        options_container = QWidget()
-        options_btn_layout = QHBoxLayout(options_container)
-        options_btn_layout.setContentsMargins(0, 0, 0, 0)
-        options_btn_layout.setSpacing(10)
-        options_btn_layout.addStretch()
+        settings_layout.addWidget(self.local_picker)
 
-        self.use_existing_btn = QPushButton("Use Existing")
-        self.use_existing_btn.setCheckable(True)
-        self.use_existing_btn.setChecked(True)
-        self.use_existing_btn.setFixedHeight(36)
-        self.use_existing_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1f6aa5;
-                color: white;
-                border: 2px solid #1f6aa5;
-                border-radius: 6px;
-                padding: 0px 16px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-                border-color: #2980b9;
-            }
-        """)
-        self.use_existing_btn.clicked.connect(lambda: self._set_use_existing(True))
-        options_btn_layout.addWidget(self.use_existing_btn)
+        # --- Custom Docs checkbox + picker (applies to all modes) ---
+        self.custom_docs_section = QWidget()
+        custom_docs_layout = QVBoxLayout(self.custom_docs_section)
+        custom_docs_layout.setContentsMargins(0, 5, 0, 0)
+        custom_docs_layout.setSpacing(6)
 
-        self.redownload_btn = QPushButton("Re-download")
-        self.redownload_btn.setCheckable(True)
-        self.redownload_btn.setFixedHeight(36)
-        self.redownload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #aaaaaa;
-                border: 2px solid #555555;
-                border-radius: 6px;
-                padding: 0px 16px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3a;
-                color: white;
-                border-color: #666666;
-            }
-        """)
-        self.redownload_btn.clicked.connect(lambda: self._set_use_existing(False))
-        options_btn_layout.addWidget(self.redownload_btn)
+        self.custom_docs_check = QCheckBox("Add Custom Docs")
+        self.custom_docs_check.setStyleSheet("font-size: 12px; color: #cccccc;")
+        self.custom_docs_check.toggled.connect(self._toggle_custom_docs)
+        custom_docs_layout.addWidget(self.custom_docs_check)
 
-        options_btn_layout.addStretch()
-        existing_layout.addWidget(options_container)
-        settings_layout.addWidget(self.existing_options)
+        self.custom_docs_picker = QWidget()
+        self.custom_docs_picker.hide()
+        cd_layout = QVBoxLayout(self.custom_docs_picker)
+        cd_layout.setContentsMargins(20, 0, 0, 0)
+        cd_layout.setSpacing(4)
+
+        cd_hint = QLabel("Folder with .md or .html files to ingest as additional docs")
+        cd_hint.setStyleSheet("font-size: 11px; color: #888888;")
+        cd_layout.addWidget(cd_hint)
+
+        cd_row = QWidget()
+        cd_row_layout = QHBoxLayout(cd_row)
+        cd_row_layout.setContentsMargins(0, 0, 0, 0)
+        cd_row_layout.setSpacing(8)
+
+        self.custom_docs_input = QLineEdit()
+        self.custom_docs_input.setPlaceholderText("Select docs folder...")
+        self.custom_docs_input.setStyleSheet(
+            "QLineEdit { background-color: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; "
+            "padding: 8px 10px; font-size: 12px; color: white; } "
+            "QLineEdit:focus { border-color: #3498db; }"
+        )
+        self.custom_docs_input.textChanged.connect(self._validate_custom_docs)
+        cd_row_layout.addWidget(self.custom_docs_input)
+
+        cd_browse = QPushButton("Browse")
+        cd_browse.setStyleSheet(
+            "QPushButton { background-color: #1f6aa5; padding: 8px 14px; border-radius: 6px; font-size: 12px; } "
+            "QPushButton:hover { background-color: #2980b9; }"
+        )
+        cd_browse.clicked.connect(self._browse_custom_docs)
+        cd_row_layout.addWidget(cd_browse)
+
+        cd_layout.addWidget(cd_row)
+
+        self.custom_docs_status = QLabel("")
+        self.custom_docs_status.setStyleSheet("font-size: 11px;")
+        cd_layout.addWidget(self.custom_docs_status)
+
+        custom_docs_layout.addWidget(self.custom_docs_picker)
+        settings_layout.addWidget(self.custom_docs_section)
 
         settings_layout.addStretch()
-
         self.stack.addWidget(self.settings_view)
 
         # ===== Terminal View (index 1) =====
@@ -4335,38 +4422,20 @@ class DatabasePage(QWidget):
         error_layout.setSpacing(10)
 
         self.open_log_btn = QPushButton("Open Log File")
-        self.open_log_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #aaaaaa;
-                border: 1px solid #555555;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3a;
-                color: white;
-            }
-        """)
+        self.open_log_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #aaaaaa; border: 1px solid #555555; "
+            "border-radius: 6px; padding: 8px 16px; font-size: 12px; } "
+            "QPushButton:hover { background-color: #3a3a3a; color: white; }"
+        )
         self.open_log_btn.clicked.connect(self.open_log_file)
         error_layout.addWidget(self.open_log_btn)
 
         self.retry_btn = QPushButton("Retry")
-        self.retry_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1f6aa5;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-        """)
-        self.retry_btn.clicked.connect(self.retry_download)
+        self.retry_btn.setStyleSheet(
+            "QPushButton { background-color: #1f6aa5; color: white; border: none; border-radius: 6px; "
+            "padding: 8px 16px; font-size: 12px; } QPushButton:hover { background-color: #2980b9; }"
+        )
+        self.retry_btn.clicked.connect(self.retry_action)
         error_layout.addWidget(self.retry_btn)
 
         error_layout.addStretch()
@@ -4374,8 +4443,102 @@ class DatabasePage(QWidget):
 
         self.stack.addWidget(self.terminal_view)
 
+        # Select Build by default
+        self._select_mode("build")
+
+    # ------------------------------------------------------------------
+    # Card selection helpers
+    # ------------------------------------------------------------------
+
+    def _on_card_clicked(self, card):
+        if card is self.local_card:
+            self._select_mode("local")
+        elif card is self.build_card:
+            self._select_mode("build")
+
+    def _select_mode(self, mode: str):
+        self._mode = mode
+        self.local_card.setSelected(mode == "local")
+        self.build_card.setSelected(mode == "build")
+
+        # Show/hide local picker
+        self.local_picker.setVisible(mode == "local")
+
+        if self._button_callback:
+            self._button_callback()
+
+    # ------------------------------------------------------------------
+    # Local DB validation
+    # ------------------------------------------------------------------
+
+    def _browse_local_db(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select LanceDB Folder")
+        if folder:
+            self.local_input.setText(folder)
+
+    def _validate_local_db(self, path: str):
+        self._local_db_path = path.strip()
+        if not self._local_db_path:
+            self.local_status.setText("")
+            return
+        p = Path(self._local_db_path)
+        if not p.exists():
+            self.local_status.setText("Folder does not exist")
+            self.local_status.setStyleSheet("font-size: 11px; color: #EF4444;")
+            return
+        missing = [t for t in self._DB_TABLES if not (p / t).exists()]
+        if missing:
+            self.local_status.setText(f"Missing: {', '.join(missing)}")
+            self.local_status.setStyleSheet("font-size: 11px; color: #F59E0B;")
+        else:
+            self.local_status.setText("✓ Valid LanceDB folder")
+            self.local_status.setStyleSheet(
+                "font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 11px; color: #22C55E;"
+            )
+        if self._button_callback:
+            self._button_callback()
+
+    # ------------------------------------------------------------------
+    # Custom docs
+    # ------------------------------------------------------------------
+
+    def _toggle_custom_docs(self, checked: bool):
+        self.custom_docs_picker.setVisible(checked)
+        if not checked:
+            self._custom_docs_path = ""
+
+    def _browse_custom_docs(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Custom Docs Folder")
+        if folder:
+            self.custom_docs_input.setText(folder)
+
+    def _validate_custom_docs(self, path: str):
+        self._custom_docs_path = path.strip()
+        if not self._custom_docs_path:
+            self.custom_docs_status.setText("")
+            return
+        p = Path(self._custom_docs_path)
+        if not p.exists():
+            self.custom_docs_status.setText("Folder does not exist")
+            self.custom_docs_status.setStyleSheet("font-size: 11px; color: #EF4444;")
+            return
+        has_md = any(p.rglob("*.md"))
+        has_html = any(p.rglob("*.html"))
+        if has_md or has_html:
+            self.custom_docs_status.setText("✓ Docs folder looks good")
+            self.custom_docs_status.setStyleSheet(
+                "font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 11px; color: #22C55E;"
+            )
+        else:
+            self.custom_docs_status.setText("No .md or .html files found")
+            self.custom_docs_status.setStyleSheet("font-size: 11px; color: #F59E0B;")
+
+    # ------------------------------------------------------------------
+    # Path / provider setup
+    # ------------------------------------------------------------------
+
     def set_paths(self, toolkit_path: str, provider: str):
-        """Set the paths needed for database download."""
+        """Set the paths needed for database operations."""
         self._toolkit_path = toolkit_path
         self._provider = provider
 
@@ -4389,96 +4552,21 @@ class DatabasePage(QWidget):
                 f"padding: 3px 8px; border-radius: 4px; font-weight: bold;"
             )
 
-        # Check for existing database
-        if toolkit_path and provider:
-            lancedb_dir = Path(toolkit_path) / "hytale-rag" / "data" / provider / "lancedb"
-            tables = ["hytale_methods.lance", "hytale_client_ui.lance", "hytale_gamedata.lance"]
-            if lancedb_dir.exists() and all((lancedb_dir / t).exists() for t in tables):
-                self._has_existing = True
-                self._use_existing = True
-                self.existing_options.show()
-            else:
-                self._has_existing = False
-                self.existing_options.hide()
-
-        # Update version display (fetches from CDN)
-        self._update_version_display()
-
         if self._button_callback:
             self._button_callback()
 
-    def _set_use_existing(self, use_existing: bool):
-        """Toggle between using existing or re-downloading."""
-        self._use_existing = use_existing
-        self.use_existing_btn.setChecked(use_existing)
-        self.redownload_btn.setChecked(not use_existing)
+    def get_settings(self) -> dict:
+        """Return current database page settings for .env propagation."""
+        settings = {"mode": self._mode}
+        if self._custom_docs_path:
+            settings["custom_docs_dir"] = self._custom_docs_path
+        if self._mode == "local" and self._local_db_path:
+            settings["local_db_path"] = self._local_db_path
+        return settings
 
-        if use_existing:
-            self.use_existing_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1f6aa5;
-                    color: white;
-                    border: 2px solid #1f6aa5;
-                    border-radius: 6px;
-                    padding: 0px 16px;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #2980b9;
-                    border-color: #2980b9;
-                }
-            """)
-            self.redownload_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: transparent;
-                    color: #aaaaaa;
-                    border: 2px solid #555555;
-                    border-radius: 6px;
-                    padding: 0px 16px;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a3a;
-                    color: white;
-                    border-color: #666666;
-                }
-            """)
-        else:
-            self.use_existing_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: transparent;
-                    color: #aaaaaa;
-                    border: 2px solid #555555;
-                    border-radius: 6px;
-                    padding: 0px 16px;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a3a;
-                    color: white;
-                    border-color: #666666;
-                }
-            """)
-            self.redownload_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #c0392b;
-                    color: white;
-                    border: 2px solid #e74c3c;
-                    border-radius: 6px;
-                    padding: 0px 16px;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #e74c3c;
-                }
-            """)
-
-        if self._button_callback:
-            self._button_callback()
+    # ------------------------------------------------------------------
+    # Wizard button callbacks
+    # ------------------------------------------------------------------
 
     def set_button_callback(self, callback):
         self._button_callback = callback
@@ -4491,194 +4579,220 @@ class DatabasePage(QWidget):
 
     def get_next_button_config(self) -> dict:
         if self._state == "running":
-            return {"text": "Downloading...", "style": "disabled", "enabled": False}
+            return {"text": "Building...", "style": "disabled", "enabled": False}
         elif self._state == "completed":
             return {"text": "Next", "style": "primary", "enabled": True}
         elif self._state == "failed":
             return {"text": "Next", "style": "primary", "enabled": True}
         else:  # idle
-            if self._has_existing and self._use_existing:
-                return {"text": "Next", "style": "primary", "enabled": True}
-            else:
-                return {"text": "Download", "style": "action", "enabled": True}
+            if self._mode == "local":
+                # Validate path exists and has tables
+                p = Path(self._local_db_path) if self._local_db_path else None
+                valid = p and p.exists() and all((p / t).exists() for t in self._DB_TABLES)
+                return {"text": "Next", "style": "primary", "enabled": bool(valid)}
+            else:  # build
+                return {"text": "Build", "style": "action", "enabled": True}
 
     def get_back_button_config(self) -> dict:
         if self._state == "running":
             return {"text": "Cancel", "style": "danger", "enabled": True}
-        else:
-            return {"text": "Back", "style": "default", "enabled": True}
+        return {"text": "Back", "style": "default", "enabled": True}
 
     def should_run_action(self) -> bool:
-        if self._has_existing and self._use_existing:
+        if self._mode == "local":
+            # Local mode: validate + symlink/copy, then proceed
+            if self._state == "idle" and self._local_db_path:
+                return True
             return False
-        return self._state == "idle"
+        elif self._mode == "build":
+            return self._state == "idle"
+        return False
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
 
     def start_download(self):
-        """Start the database download process."""
+        """Start the appropriate action based on selected mode."""
+        if self._mode == "local":
+            self._apply_local_database()
+        elif self._mode == "build":
+            self._start_build_locally()
+
+    def _apply_local_database(self):
+        """Validate and symlink/copy a local LanceDB folder."""
+        if not self._local_db_path:
+            return
+
+        local_db = Path(self._local_db_path)
+        if not local_db.exists():
+            self._state = "failed"
+            self.desc.setText("Local database folder not found.")
+            if self._button_callback:
+                self._button_callback()
+            return
+
+        toolkit_path = Path(self._toolkit_path)
+        provider_dir = toolkit_path / "hytale-rag" / "data" / self._provider
+        provider_dir.mkdir(parents=True, exist_ok=True)
+        lancedb_dir = provider_dir / "lancedb"
+
+        # Remove existing
+        if lancedb_dir.exists() or lancedb_dir.is_symlink():
+            shutil.rmtree(lancedb_dir, ignore_errors=True)
+            if lancedb_dir.is_symlink():
+                lancedb_dir.unlink()
+
+        try:
+            lancedb_dir.symlink_to(local_db, target_is_directory=True)
+        except OSError:
+            shutil.copytree(str(local_db), str(lancedb_dir))
+
+        self._state = "completed"
+        self.desc.setText("Local database configured successfully!")
+        if self._button_callback:
+            self._button_callback()
+
+    def _start_build_locally(self):
+        """Run the ingest pipeline to build the database from source."""
         if self._state == "running":
             return
 
         self._state = "running"
         self.stack.setCurrentIndex(1)
-        self.desc.setText("Downloading pre-built database...")
+        self.desc.setText("Building database locally (this may take 15-30 minutes)...")
         self.terminal.clear_terminal()
         self.error_actions.hide()
-        self.progress_label.setText("Starting download...")
+        self.progress_label.setText("Starting build...")
 
         if self._button_callback:
             self._button_callback()
         if self._back_button_callback:
             self._back_button_callback()
 
-        # Setup log file
         toolkit_path = Path(self._toolkit_path)
         logs_dir = toolkit_path / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._log_file_path = logs_dir / f"database_{timestamp}.log"
+        self._log_file_path = logs_dir / f"database_build_{timestamp}.log"
 
-        # Log header
         self.terminal.append_info("=" * 60)
-        self.terminal.append_info("Hytale Toolkit - Database Download Log")
+        self.terminal.append_info("Hytale Toolkit - Build Database Locally")
         self.terminal.append_info(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.terminal.append_info("=" * 60)
         self.terminal.append_line("")
         self.terminal.append_line(f"Provider: {self._provider}")
-        self.terminal.append_line(f"Toolkit Path: {self._toolkit_path}")
         self.terminal.append_line("")
 
-        # Run the download script
-        provider_dir = toolkit_path / "hytale-rag" / "data" / self._provider
-        provider_dir.mkdir(parents=True, exist_ok=True)
+        # Load .env to get paths
+        hytale_rag_dir = toolkit_path / "hytale-rag"
+        env_path = hytale_rag_dir / ".env"
+        env_vars = {}
+        if env_path.exists():
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            env_vars[k.strip()] = v.strip()
+            except Exception:
+                pass
 
-        lancedb_dir = provider_dir / "lancedb"
-        if lancedb_dir.exists():
-            self.terminal.append_warning("Removing existing database...")
-            shutil.rmtree(lancedb_dir)
+        install_path = env_vars.get("HYTALE_INSTALL_PATH", "")
+        decompiled_dir = env_vars.get("HYTALE_DECOMPILED_DIR", str(toolkit_path / "decompiled"))
 
-        self.terminal.append_info("Starting download...")
-        self.terminal.append_line("")
+        # Build the inline script that runs all ingest steps
+        # We run npx tsx for each ingest script sequentially
+        client_data = Path(install_path) / "Client" / "Data" if install_path else None
+        assets_zip = Path(install_path) / "Assets.zip" if install_path else None
 
-        # Start Python process to run download
+        sources = [f'("Server Code", "src/ingest.ts", [r"{decompiled_dir}"])']
+        if client_data and client_data.exists():
+            sources.append(f'("Client UI", "src/ingest-client.ts", [r"{client_data}"])')
+        if assets_zip and assets_zip.exists():
+            sources.append(f'("Game Data", "src/ingest-gamedata.ts", [r"{assets_zip}"])')
+        sources.append('("Docs", "src/ingest-docs.ts", [])')
+
+        # Also append custom docs ingest if enabled
+        custom_docs_cmd = ""
+        if self._custom_docs_path and Path(self._custom_docs_path).exists():
+            sources.append(f'("Custom Docs", "src/ingest-docs.ts", [r"{self._custom_docs_path}"])')
+
+        sources_literal = ", ".join(sources)
+
+        # Build env vars for the provider
+        provider_env_lines = f'    proc_env["EMBEDDING_PROVIDER"] = "{self._provider}"'
+        if self._provider == "voyage":
+            api_key = env_vars.get("VOYAGE_API_KEY", "")
+            provider_env_lines += f'\n    proc_env["VOYAGE_API_KEY"] = "{api_key}"'
+        else:
+            model = env_vars.get("OLLAMA_MODEL", "nomic-embed-text")
+            provider_env_lines += f'\n    proc_env["OLLAMA_MODEL"] = "{model}"'
+
+        script = f'''
+import os
+import platform
+import subprocess
+import sys
+
+cwd = r"{hytale_rag_dir}"
+
+# Install npm deps first
+print("Installing npm dependencies...")
+use_shell = platform.system() == "Windows"
+result = subprocess.run(["npm", "install"], cwd=cwd, shell=use_shell)
+if result.returncode != 0:
+    print("WARNING: npm install had issues")
+print()
+
+sources = [{sources_literal}]
+failed = False
+for name, script_path, args in sources:
+    print(f"[{{name}}] Indexing...")
+    proc_env = os.environ.copy()
+{provider_env_lines}
+    cmd = ["npx", "--yes", "tsx", script_path] + args
+    result = subprocess.run(cmd, cwd=cwd, env=proc_env, shell=use_shell)
+    if result.returncode != 0:
+        print(f"[{{name}}] Failed!")
+        failed = True
+    else:
+        print(f"[{{name}}] Complete!")
+    print()
+
+if failed:
+    print("WARNING: Some ingest steps failed.")
+    sys.exit(1)
+else:
+    print("Database built successfully!")
+    sys.exit(0)
+'''
+
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self._process.readyReadStandardOutput.connect(self._handle_output)
         self._process.finished.connect(self._handle_finished)
         self._process.errorOccurred.connect(self._handle_error)
 
-        # Strip PyInstaller's LD_LIBRARY_PATH so system Python uses its own libs
         clean_env = _clean_pyinstaller_env()
         if clean_env:
             self._process.setProcessEnvironment(clean_env)
 
-        # Find Python interpreter (sys.executable is the .exe when frozen)
         if getattr(_sys, '_MEIPASS', None):
-            # Running as bundled exe - find system Python
-            if sys.platform == "win32":
-                python_cmd = "python"
-            else:
-                python_cmd = "python3"
+            python_cmd = "python" if sys.platform == "win32" else "python3"
         else:
             python_cmd = sys.executable
 
-        # Inline download script - doesn't depend on external setup.py
-        # This ensures we always use CDN, even if toolkit has old code
-        script = f'''
-import json
-import ssl
-import sys
-import tarfile
-import urllib.request
-from pathlib import Path
-
-CDN_BASE_URL = "https://cdn.loganmcduffie.com"
-provider = "{self._provider}"
-dest_dir = Path(r"{provider_dir}")
-
-dest_dir.mkdir(parents=True, exist_ok=True)
-asset_name = f"lancedb-{{provider}}-all.tar.gz"
-tarball_path = dest_dir / asset_name
-manifest_url = f"{{CDN_BASE_URL}}/db/manifest.json"
-
-print("Fetching latest release info...")
-try:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
-    req = urllib.request.Request(manifest_url, headers={{"User-Agent": "Hytale-Toolkit"}})
-    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-        manifest = json.loads(response.read().decode())
-
-    latest_version = manifest.get("latest")
-    if not latest_version:
-        print("ERROR: No latest version found in manifest.")
-        sys.exit(1)
-
-    download_url = f"{{CDN_BASE_URL}}/db/{{latest_version}}/{{asset_name}}"
-    print(f"Latest version: {{latest_version}}")
-except Exception as e:
-    print(f"ERROR: Failed to fetch version info: {{e}}")
-    sys.exit(1)
-
-print(f"Downloading {{asset_name}}...")
-try:
-    req = urllib.request.Request(download_url, headers={{"User-Agent": "Hytale-Toolkit"}})
-    with urllib.request.urlopen(req, context=ctx, timeout=300) as response:
-        total_size = int(response.headers.get("Content-Length", 0))
-        downloaded = 0
-        block_size = 8192
-
-        with open(tarball_path, "wb") as f:
-            while True:
-                chunk = response.read(block_size)
-                if not chunk:
-                    break
-                f.write(chunk)
-                downloaded += len(chunk)
-
-                if total_size > 0:
-                    percent = min(100, downloaded * 100 / total_size)
-                    mb_down = downloaded / (1024 * 1024)
-                    mb_total = total_size / (1024 * 1024)
-                    print(f"\\rDownload: {{percent:.1f}}% ({{mb_down:.1f}}/{{mb_total:.1f}} MB)", end="", flush=True)
-    print()
-except Exception as e:
-    print(f"\\nERROR: Download failed: {{e}}")
-    sys.exit(1)
-
-print("Extracting database...")
-try:
-    with tarfile.open(tarball_path, "r:gz") as tar:
-        tar.extractall(path=dest_dir)
-    tarball_path.unlink()
-    print("Extraction complete!")
-except Exception as e:
-    print(f"ERROR: Extraction failed: {{e}}")
-    sys.exit(1)
-
-# Save version file
-version_file = dest_dir / ".version"
-try:
-    version_file.write_text(latest_version)
-except Exception:
-    pass
-
-print("Database download successful!")
-sys.exit(0)
-'''
         self._process.start(python_cmd, ["-c", script])
 
     def cancel_download(self):
         if self._process and self._state == "running":
-            self.terminal.append_warning("\nCancelling download...")
+            self.terminal.append_warning("\nCancelling...")
             self._process.kill()
             self._state = "idle"
             self.stack.setCurrentIndex(0)
-            self.desc.setText(
-                "Download the pre-built vector database for semantic code search.\n"
-                "This contains indexed embeddings for fast Hytale code lookup."
-            )
+            self.desc.setText("Choose how to set up the vector database for semantic code search.")
             if self._button_callback:
                 self._button_callback()
             if self._back_button_callback:
@@ -4696,9 +4810,9 @@ sys.exit(0)
                 self.terminal.append_error(line)
             elif "warning" in line.lower():
                 self.terminal.append_warning(line)
-            elif "%" in line or "download" in line.lower():
+            elif "%" in line or "download" in line.lower() or "indexing" in line.lower():
                 self.terminal.append_info(line)
-                self.progress_label.setText(line[:50])
+                self.progress_label.setText(line[:60])
             else:
                 self.terminal.append_line(line)
 
@@ -4707,13 +4821,13 @@ sys.exit(0)
         if exit_code == 0:
             self._state = "completed"
             self.terminal.append_success("=" * 60)
-            self.terminal.append_success("Database download completed successfully!")
+            self.terminal.append_success("Database build completed successfully!")
             self.terminal.append_success("=" * 60)
-            self.desc.setText("Database downloaded successfully!")
+            self.desc.setText("Database build completed!")
             self.progress_label.setText("Complete!")
             self.progress_label.setStyleSheet("font-size: 12px; color: #22C55E; font-weight: bold;")
         else:
-            self._finish_with_error(f"Download failed with exit code {exit_code}")
+            self._finish_with_error(f"Process failed with exit code {exit_code}")
 
         self._save_log()
         if self._button_callback:
@@ -4735,9 +4849,9 @@ sys.exit(0)
         self._state = "failed"
         self.terminal.append_line("")
         self.terminal.append_error("=" * 60)
-        self.terminal.append_error(f"Download failed: {error_msg}")
+        self.terminal.append_error(f"Failed: {error_msg}")
         self.terminal.append_error("=" * 60)
-        self.desc.setText("Download failed. You can retry or continue without it.")
+        self.desc.setText("Operation failed. You can retry or continue without it.")
         self.progress_label.setText("Failed")
         self.progress_label.setStyleSheet("font-size: 12px; color: #EF4444; font-weight: bold;")
         self.error_actions.show()
@@ -4757,76 +4871,18 @@ sys.exit(0)
 
     def open_log_file(self):
         if self._log_file_path and self._log_file_path.exists():
-            import subprocess
+            import subprocess as _sp
             if sys.platform == "win32":
                 os.startfile(str(self._log_file_path))
             elif sys.platform == "darwin":
-                subprocess.run(["open", str(self._log_file_path)])
+                _sp.run(["open", str(self._log_file_path)])
             else:
-                subprocess.run(["xdg-open", str(self._log_file_path)])
+                _sp.run(["xdg-open", str(self._log_file_path)])
 
-    def retry_download(self):
+    def retry_action(self):
         self._state = "idle"
         self.progress_label.setStyleSheet("font-size: 12px; color: #888888;")
         self.start_download()
-
-    def _fetch_latest_version(self) -> str | None:
-        """Fetch the latest available database version from CDN manifest."""
-        manifest_url = f"{CDN_BASE_URL}/db/manifest.json"
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-
-            req = urllib.request.Request(manifest_url, headers={"User-Agent": "Hytale-Toolkit"})
-            with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
-                manifest = json.loads(response.read().decode())
-            return manifest.get("latest")
-        except Exception:
-            return None
-
-    def _get_installed_version(self) -> str | None:
-        """Get the installed database version from .version file."""
-        if not self._toolkit_path or not self._provider:
-            return None
-        version_file = Path(self._toolkit_path) / "hytale-rag" / "data" / self._provider / ".version"
-        if version_file.exists():
-            try:
-                return version_file.read_text().strip()
-            except Exception:
-                pass
-        return None
-
-    def _update_version_display(self):
-        """Update the version labels with latest and installed versions."""
-        # Fetch latest version from CDN
-        latest = self._fetch_latest_version()
-        installed = self._get_installed_version()
-
-        # Update main card version label
-        if latest:
-            self.version_label.setText(f"Hytale Version: {latest}")
-            self.version_label.setStyleSheet("font-size: 11px; color: #888888; background: transparent;")
-        else:
-            self.version_label.setText("Hytale Version: Unable to fetch")
-            self.version_label.setStyleSheet("font-size: 11px; color: #666666; background: transparent;")
-
-        # Update existing database label with installed version
-        if self._has_existing and installed:
-            self.existing_label.setText(f"✓ Existing database found (Hytale {installed})")
-            self.existing_label.setStyleSheet(
-                "font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 13px; font-weight: bold; color: #22C55E;"
-            )
-            # Check if update is available - show warning in separate label
-            if latest and installed != latest:
-                self.update_warning_label.setText(f"⚠ Update available: {latest}")
-                self.update_warning_label.show()
-            else:
-                self.update_warning_label.hide()
-        elif self._has_existing:
-            self.existing_label.setText("✓ Existing database found")
-            self.update_warning_label.hide()
-
 
 def check_node_installed() -> tuple[bool, str]:
     """Check if Node.js is installed. Returns (is_installed, version_or_error)."""
@@ -6578,7 +6634,7 @@ class SetupWizard(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Hytale Toolkit Setup")
-        self.setFixedSize(750, 550)
+        self.setFixedSize(900, 660)
 
         # Dark theme
         self.setStyleSheet("""
@@ -6681,8 +6737,8 @@ class SetupWizard(QMainWindow):
         # Save config when leaving certain pages
         prev_page = self.pages[self.current_page] if hasattr(self, 'current_page') else None
         if prev_page:
-            # Save when leaving Paths page (index 1) or Provider page (index 4)
-            if isinstance(prev_page, (HytalePathPage, ProviderPage)):
+            # Save when leaving Paths page (index 1), Provider page (index 4), or Database page (index 5)
+            if isinstance(prev_page, (HytalePathPage, ProviderPage, DatabasePage)):
                 self.save_config()
 
         self.current_page = index
@@ -7019,6 +7075,16 @@ class SetupWizard(QMainWindow):
                 # Remove Voyage config if switching to Ollama
                 config.pop("VOYAGE_API_KEY", None)
 
+        # Database page settings (custom docs path)
+        database_page = self.pages[5]  # DatabasePage
+        if hasattr(database_page, 'get_settings'):
+            db_settings = database_page.get_settings()
+            custom_docs = db_settings.get('custom_docs_dir', '')
+            if custom_docs:
+                config["CUSTOM_DOCS_DIR"] = custom_docs
+            else:
+                config.pop("CUSTOM_DOCS_DIR", None)
+
         # Write the .env file
         try:
             with open(env_path, "w", encoding="utf-8") as f:
@@ -7033,6 +7099,7 @@ class SetupWizard(QMainWindow):
                     "EMBEDDING_PROVIDER",
                     "VOYAGE_API_KEY",
                     "OLLAMA_MODEL",
+                    "CUSTOM_DOCS_DIR",
                 ]
 
                 # Write ordered keys first

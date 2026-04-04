@@ -71,7 +71,6 @@ log_file = None
 # ============================================================================
 
 GITHUB_REPO = "logan-mcduffie/Hytale-Toolkit"
-CDN_BASE_URL = "https://cdn.loganmcduffie.com"
 OLLAMA_MODEL = "nomic-embed-text"
 JDK_VERSION = 21  # LTS version for javadoc generation
 
@@ -89,7 +88,7 @@ REQUIRED_CONTENTS = ["Client", "Server", "Assets.zip"]
 DEFAULT_HYTALE_PATH = Path(os.environ.get("APPDATA", "")) / "Hytale" / "install" / "release" / "package" / "game" / "latest"
 
 # Data tables
-DATA_TABLES = ["hytale_methods.lance", "hytale_client_ui.lance", "hytale_gamedata.lance"]
+DATA_TABLES = ["hytale_methods.lance", "hytale_client_ui.lance", "hytale_gamedata.lance", "hytale_docs.lance"]
 
 
 # ============================================================================
@@ -447,11 +446,14 @@ def decompile_server(install_path: str, env: dict[str, str], ram_gb: int = 8) ->
     print()
 
     # Run Vineflower with progress output
+    # Cap threads to avoid OOM - Vineflower defaults to 16 threads, each using significant heap
+    thread_count = max(1, min(4, ram_gb // 2))
     cmd = [
         "java",
         "-Xms2G",           # Initial heap size
         f"-Xmx{ram_gb}G",   # Maximum heap size (user-configured)
         "-jar", str(VINEFLOWER_JAR),
+        f"-thr={thread_count}",  # Limit threads to prevent OOM
         "-dgs=1",  # Decompile generic signatures
         "-asc=1",  # ASCII string characters
         "-rsy=1",  # Remove synthetic class members
@@ -1403,117 +1405,6 @@ def verify_database_files(lancedb_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
-def download_database(dest_dir: Path, provider: str) -> bool:
-    """Download and extract the LanceDB database from CDN."""
-    import ssl
-
-    if log:
-        log_section(log, "Database Download")
-        log.info(f"Downloading database for provider: {provider}")
-        log.info(f"Destination: {dest_dir}")
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    asset_name = f"lancedb-{provider}-all.tar.gz"
-    tarball_path = dest_dir / asset_name
-
-    manifest_url = f"{CDN_BASE_URL}/db/manifest.json"
-
-    print("  Fetching latest version info...")
-    if log:
-        log.debug(f"Manifest URL: {manifest_url}")
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
-        req = urllib.request.Request(manifest_url, headers={"User-Agent": "Hytale-RAG-Setup"})
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-            manifest = json.loads(response.read().decode())
-
-        latest_version = manifest.get("latest")
-        if not latest_version:
-            if log:
-                log.error("No latest version found in manifest")
-            print("  ERROR: No latest version found in manifest.")
-            return False
-
-        download_url = f"{CDN_BASE_URL}/db/{latest_version}/{asset_name}"
-        if log:
-            log.info(f"Latest version: {latest_version}")
-            log.info(f"Download URL: {download_url}")
-
-        print(f"  Latest version: {latest_version}")
-
-    except Exception as e:
-        if log:
-            log.error(f"Failed to fetch manifest: {e}")
-            log_exception(log, "download_database")
-        print(f"  ERROR: Failed to fetch version info: {e}")
-        return False
-
-    print(f"  Downloading {asset_name}...")
-    try:
-        req = urllib.request.Request(download_url, headers={"User-Agent": "Hytale-RAG-Setup"})
-        with urllib.request.urlopen(req, context=ctx, timeout=300) as response:
-            total_size = int(response.headers.get("Content-Length", 0))
-            downloaded = 0
-            block_size = 8192
-
-            with open(tarball_path, "wb") as f:
-                while True:
-                    chunk = response.read(block_size)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-                    if total_size > 0:
-                        percent = min(100, downloaded * 100 / total_size)
-                        mb_downloaded = downloaded / (1024 * 1024)
-                        mb_total = total_size / (1024 * 1024)
-                        bar_width = 30
-                        filled = int(bar_width * percent / 100)
-                        bar = "=" * filled + "-" * (bar_width - filled)
-                        print(f"\r  [{bar}] {percent:5.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)", end="", flush=True)
-
-        print()
-        if log:
-            log.info(f"Download complete: {tarball_path}")
-
-    except Exception as e:
-        if log:
-            log.error(f"Download failed: {e}")
-            log_exception(log, "download_database")
-        print(f"\n  ERROR: Download failed: {e}")
-        return False
-
-    print("  Extracting database...")
-    try:
-        with tarfile.open(tarball_path, "r:gz") as tar:
-            tar.extractall(path=dest_dir)
-        tarball_path.unlink()
-        if log:
-            log.info("Extraction complete")
-        print("  Extraction complete!")
-    except Exception as e:
-        if log:
-            log.error(f"Extraction failed: {e}")
-            log_exception(log, "download_database")
-        print(f"  ERROR: Extraction failed: {e}")
-        return False
-
-    # Save the version to a .version file for the MCP server to read
-    version_file = dest_dir / ".version"
-    try:
-        version_file.write_text(latest_version)
-        if log:
-            log.info(f"Database version: {latest_version}")
-    except Exception:
-        pass  # Non-critical if this fails
-
-    return True
-
-
 # ============================================================================
 #  MCP Client Integration
 # ============================================================================
@@ -1897,66 +1788,190 @@ def main():
     log_section(log, "Step 5: Install Database")
 
     print("  The RAG database contains pre-indexed embeddings for fast search.")
-    print("  Downloading the pre-built database is much faster than indexing locally.")
+    print("  Choose how you want to set up the database:")
     print()
 
     data_dir = SCRIPT_DIR / "data"
     provider_dir = data_dir / provider
     lancedb_dir = provider_dir / "lancedb"
 
-    needs_download = not lancedb_dir.exists() or not all(
-        (lancedb_dir / table).exists() for table in DATA_TABLES
-    )
+    db_options = [
+        ("Use Local Database",
+         "Point to an existing LanceDB folder on disk."),
+        ("Build Locally",
+         "Run the ingest pipeline to build the database from scratch.\n"
+         "      This may take 15-30 minutes depending on your hardware."),
+    ]
 
-    if needs_download:
-        print("  Downloading pre-built database...", flush=True)
+    db_choice = prompt_choice(db_options, "Select database source")
+
+    if db_choice == 0:
+        # ---- Use Local Database ----
+        print()
+        print("  Select an existing LanceDB folder.")
+        print("  It should contain .lance table directories")
+        print(f"  (e.g. {', '.join(DATA_TABLES)}).")
         print()
 
-        if lancedb_dir.exists():
-            shutil.rmtree(lancedb_dir, ignore_errors=True)
+        local_db_path = None
+        folder = open_folder_picker("Select LanceDB folder")
+        if folder:
+            local_db_path = folder
+        else:
+            local_db_path = input("  Enter path to LanceDB folder: ").strip()
 
-        if not download_database(provider_dir, provider):
+        if not local_db_path:
+            print("  ERROR: No folder provided.")
+            sys.exit(1)
+
+        local_db = Path(local_db_path)
+        if not local_db.exists():
+            print(f"  ERROR: Folder does not exist: {local_db}")
+            sys.exit(1)
+
+        # Validate .lance table directories
+        missing_tables = [t for t in DATA_TABLES if not (local_db / t).exists()]
+        if missing_tables:
+            print(f"  WARNING: Missing tables: {', '.join(missing_tables)}")
+            if not prompt_yes_no("Continue anyway?", default=False):
+                sys.exit(1)
+
+        # Verify the database files
+        print()
+        success, error = verify_database_files(local_db)
+        if not success:
+            print(f"  WARNING: Verification issue: {error}")
+            if not prompt_yes_no("Continue anyway?", default=False):
+                sys.exit(1)
+
+        # Symlink or copy into the expected provider data directory
+        provider_dir.mkdir(parents=True, exist_ok=True)
+        if lancedb_dir.exists() or lancedb_dir.is_symlink():
+            shutil.rmtree(lancedb_dir, ignore_errors=True)
+            if lancedb_dir.is_symlink():
+                lancedb_dir.unlink()
+
+        try:
+            # Try symlink first (avoids duplicating data)
+            lancedb_dir.symlink_to(local_db, target_is_directory=True)
+            print(f"  Linked database: {local_db} -> {lancedb_dir}")
+        except OSError:
+            # Symlink may fail on Windows without privileges; fall back to copy
+            print("  Symlink not available, copying database...", flush=True)
+            shutil.copytree(local_db, lancedb_dir)
+            print(f"  Copied database to {lancedb_dir}")
+
+        if log:
+            log.info(f"Local database path: {local_db}")
+        print("  Local database configured successfully!")
+
+    elif db_choice == 1:
+        # ---- Build Locally ----
+        print()
+        print("  Building database locally using the ingest pipeline...")
+        print("  This may take 15-30 minutes depending on your hardware.")
+        print()
+
+        # Ensure npm deps are installed first
+        if not setup_npm():
+            print("  ERROR: npm is required to build the database locally.")
+            sys.exit(1)
+        print()
+        print("  Installing npm dependencies...", flush=True)
+        exit_code, output = run_command(["npm", "install"], cwd=SCRIPT_DIR)
+        if exit_code != 0:
+            print(f"  WARNING: npm install had issues: {output[:200]}")
+        else:
+            print("  Dependencies installed.")
+        print()
+
+        # Derive paths for ingest scripts
+        install_path_obj = Path(env["HYTALE_INSTALL_PATH"])
+        decompiled_dir = Path(env.get("HYTALE_DECOMPILED_DIR", str(DECOMPILED_DIR)))
+        client_data = install_path_obj / "Client" / "Data"
+        assets_zip = install_path_obj / "Assets.zip"
+
+        # Build ingest env vars
+        ingest_env = {"EMBEDDING_PROVIDER": provider}
+        if provider == "voyage":
+            ingest_env["VOYAGE_API_KEY"] = env.get("VOYAGE_API_KEY", "")
+        elif provider == "ollama":
+            ingest_env["OLLAMA_MODEL"] = env.get("OLLAMA_MODEL", "nomic-embed-text")
+
+        sources = [("Server Code", "src/ingest.ts", [str(decompiled_dir)])]
+        if client_data.exists():
+            sources.append(("Client UI", "src/ingest-client.ts", [str(client_data)]))
+        if assets_zip.exists():
+            sources.append(("Game Data", "src/ingest-gamedata.ts", [str(assets_zip)]))
+        sources.append(("Docs", "src/ingest-docs.ts", []))
+
+        build_failed = False
+        for name, script, args in sources:
+            print(f"  [{provider}/{name}] Indexing...")
             print()
-            print("  Download failed. You have two options:")
-            print("    1. Check your internet connection and run setup.py again")
-            print("    2. Run index-all.py to build the database locally")
+            cmd = ["npx", "--yes", "tsx", script] + args
+            exit_code, output = run_command(cmd, cwd=SCRIPT_DIR, env=ingest_env)
+            if exit_code != 0:
+                print(f"  [{provider}/{name}] Failed!")
+                build_failed = True
+            else:
+                print(f"  [{provider}/{name}] Complete!")
             print()
-            if not prompt_yes_no("Continue without database?", default=False):
+
+        if build_failed:
+            print("  WARNING: Some ingest steps failed.")
+            if not prompt_yes_no("Continue anyway?", default=False):
                 sys.exit(1)
         else:
-            print()
-            # Verify all database files with progress bar
-            success, error = verify_database_files(lancedb_dir)
-            if not success:
-                print(f"  ERROR: {error}")
-                print("  Please run setup again or run index-all.py to rebuild.")
-                sys.exit(1)
+            print("  Database built successfully!")
 
-            # Also run a quick functional test
-            print("  Running functional test...", flush=True)
-            exit_code, output = run_command(
-                ["npx", "--yes", "tsx", "src/search.ts", "--stats"],
-                cwd=SCRIPT_DIR
-            )
+    # ---- Custom Docs (applies to all modes) ----
+    print()
+    if prompt_yes_no("Ingest docs from a custom folder?", default=False):
+        print()
+        print("  Select a folder containing .md or .html documentation files.")
+        print()
 
-            if "panic" in output.lower() or "range start" in output:
-                print("  ERROR: Database appears corrupted. Please run setup again.")
-                sys.exit(1)
+        custom_docs_path = None
+        folder = open_folder_picker("Select Custom Docs folder")
+        if folder:
+            custom_docs_path = folder
+        else:
+            custom_docs_path = input("  Enter path to custom docs folder: ").strip()
 
-            print("  Database verified successfully!")
-    else:
-        print("  Database already exists.")
-        if prompt_yes_no("Re-download?", default=False):
-            shutil.rmtree(lancedb_dir, ignore_errors=True)
-            if not download_database(provider_dir, provider):
-                print("  Download failed.")
+        if custom_docs_path:
+            custom_dir = Path(custom_docs_path)
+            if not custom_dir.exists():
+                print(f"  WARNING: Folder does not exist: {custom_dir}")
+            elif not any(custom_dir.rglob("*.md")) and not any(custom_dir.rglob("*.html")):
+                print("  WARNING: No .md or .html files found in folder.")
+                if prompt_yes_no("Continue with this folder anyway?", default=False):
+                    env["CUSTOM_DOCS_DIR"] = str(custom_dir)
+                    save_env(env)
             else:
+                env["CUSTOM_DOCS_DIR"] = str(custom_dir)
+                save_env(env)
+
+                # Run docs ingest with custom path
                 print()
-                success, error = verify_database_files(lancedb_dir)
-                if not success:
-                    print(f"  WARNING: Verification issue: {error}")
+                print("  Ingesting custom docs...", flush=True)
+                ingest_env = {"EMBEDDING_PROVIDER": provider}
+                if provider == "voyage":
+                    ingest_env["VOYAGE_API_KEY"] = env.get("VOYAGE_API_KEY", "")
+                elif provider == "ollama":
+                    ingest_env["OLLAMA_MODEL"] = env.get("OLLAMA_MODEL", "nomic-embed-text")
+
+                exit_code, output = run_command(
+                    ["npx", "--yes", "tsx", "src/ingest-docs.ts", str(custom_dir)],
+                    cwd=SCRIPT_DIR,
+                    env=ingest_env,
+                )
+                if exit_code != 0:
+                    print("  WARNING: Custom docs ingest failed.")
                 else:
-                    print("  Database verified successfully!")
+                    print("  Custom docs ingested successfully!")
+        else:
+            print("  Skipped: No folder provided.")
 
     # Ensure npm is installed
     print()
