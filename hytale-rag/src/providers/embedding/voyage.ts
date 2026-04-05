@@ -50,8 +50,10 @@ const MODEL_DIMENSIONS: Record<string, number> = {
 /** Default batch size (Voyage supports up to 128) */
 const DEFAULT_BATCH_SIZE = 128;
 
-/** Default rate limit delay */
-const DEFAULT_RATE_LIMIT_MS = 100;
+/** Max elapsed wait between retries (ms) */
+const MAX_RETRY_WAIT_MS = 64_000;
+/** Max number of retry attempts on 429 */
+const MAX_RETRIES = 6;
 
 /** Max characters before truncation (~8K tokens for code) */
 const MAX_CHARS_CODE = 32000;
@@ -82,7 +84,6 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
   private apiKey: string;
   private models: { code: string; text: string };
   private batchSize: number;
-  private rateLimitMs: number;
   private dispatcher: Dispatcher | undefined;
 
   constructor(config: EmbeddingProviderConfig) {
@@ -96,8 +97,58 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
       text: config.models?.text || DEFAULT_MODELS.text,
     };
     this.batchSize = config.batchSize || DEFAULT_BATCH_SIZE;
-    this.rateLimitMs = config.rateLimitMs || DEFAULT_RATE_LIMIT_MS;
     this.dispatcher = getProxyDispatcher();
+  }
+
+  /**
+   * Execute a Voyage API fetch with exponential backoff on 429 responses.
+   *
+   * Voyage tier-1 limits: 2000 RPM / 3M TPM for voyage-4-large and voyage-code-3.
+   * Strategy: send at full speed; when a 429 arrives honour the Retry-After header if
+   * present, otherwise back off exponentially (2^attempt seconds ± 20 % jitter, capped
+   * at MAX_RETRY_WAIT_MS) and retry the same batch.
+   */
+  private async fetchWithBackoff(
+    body: string,
+    attempt: number = 0
+  ): Promise<Response> {
+    const response = await fetch(VOYAGE_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body,
+      // @ts-expect-error - dispatcher is a valid undici option for Node.js fetch
+      dispatcher: this.dispatcher,
+    });
+
+    if (response.status !== 429) {
+      return response;
+    }
+
+    if (attempt >= MAX_RETRIES) {
+      const errorText = await response.text();
+      throw new Error(`Voyage API rate limited after ${MAX_RETRIES} retries: ${errorText}`);
+    }
+
+    // Prefer Retry-After header; fall back to exponential backoff with ±20% jitter.
+    const retryAfterHeader = response.headers.get("retry-after");
+    let waitMs: number;
+    if (retryAfterHeader) {
+      const seconds = parseFloat(retryAfterHeader);
+      waitMs = isNaN(seconds) ? 1000 : Math.ceil(seconds * 1000);
+    } else {
+      const base = Math.pow(2, attempt) * 1000; // 1 s, 2 s, 4 s, …
+      waitMs = Math.min(base * (0.8 + Math.random() * 0.4), MAX_RETRY_WAIT_MS);
+    }
+
+    process.stderr.write(
+      `\n  [Voyage] Rate limited (429) — waiting ${(waitMs / 1000).toFixed(1)}s before retry ${attempt + 1}/${MAX_RETRIES}...\n`
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+
+    return this.fetchWithBackoff(body, attempt + 1);
   }
 
   /**
@@ -122,20 +173,9 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
     for (let i = 0; i < truncatedTexts.length; i += this.batchSize) {
       const batch = truncatedTexts.slice(i, i + this.batchSize);
 
-      const response = await fetch(VOYAGE_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          input: batch,
-          input_type: inputType,
-        }),
-        // @ts-expect-error - dispatcher is a valid undici option for Node.js fetch
-        dispatcher: this.dispatcher,
-      });
+      const response = await this.fetchWithBackoff(
+        JSON.stringify({ model, input: batch, input_type: inputType })
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -152,11 +192,6 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
       // Report progress
       if (onProgress) {
         onProgress(Math.min(i + this.batchSize, truncatedTexts.length), truncatedTexts.length);
-      }
-
-      // Rate limiting between batches
-      if (i + this.batchSize < truncatedTexts.length) {
-        await new Promise((resolve) => setTimeout(resolve, this.rateLimitMs));
       }
     }
 
@@ -189,22 +224,9 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
    */
   async validate(): Promise<boolean> {
     try {
-      // Make a minimal API call to verify credentials
-      const response = await fetch(VOYAGE_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.models.text,
-          input: ["test"],
-          input_type: "query",
-        }),
-        // @ts-expect-error - dispatcher is a valid undici option for Node.js fetch
-        dispatcher: this.dispatcher,
-      });
-
+      const response = await this.fetchWithBackoff(
+        JSON.stringify({ model: this.models.text, input: ["test"], input_type: "query" })
+      );
       return response.ok;
     } catch {
       return false;

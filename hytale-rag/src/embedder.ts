@@ -61,10 +61,10 @@ function createProviderFromConfig(config: IngestEmbeddingConfig): EmbeddingProvi
     type: config.provider,
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
-    // Voyage: 8 to stay under 120K token limit per batch (client UI files can be very large)
-    // Ollama: 10 since it's slower and runs locally
-    batchSize: config.provider === "voyage" ? 8 : 10,
-    rateLimitMs: config.provider === "voyage" ? 100 : 50,
+    // Voyage: use full batch size (128); adaptive rate-limit backoff in VoyageEmbeddingProvider
+    // handles 429s — no need for a conservative starting size or a fixed inter-batch delay.
+    // Ollama: 10 since it runs locally and cannot parallelise as well.
+    batchSize: config.provider === "voyage" ? 128 : 10,
   };
 
   if (config.model) {
