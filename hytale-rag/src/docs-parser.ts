@@ -28,7 +28,7 @@ export interface DocsChunk {
   filePath: string;              // Full path to the file
   relativePath: string;          // Path relative to content/docs/en
   fileHash: string;              // SHA-256 hash for incremental indexing
-  content: string;               // Raw file content (MDX/Markdown)
+  content: string;               // Raw file content (MDX/`Markdown`)
   category?: string;             // e.g., "guides", "plugin", "ecs"
   description?: string;          // From frontmatter if available
   textForEmbedding: string;      // Text optimized for semantic search

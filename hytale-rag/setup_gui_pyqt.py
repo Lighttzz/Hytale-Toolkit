@@ -618,7 +618,7 @@ class SidebarWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(216)
+        self.setFixedWidth(238)
         self.background_pixmap = None
         self.current_step = 0
         self.steps = [
@@ -4389,6 +4389,58 @@ class DatabasePage(QWidget):
         custom_docs_layout.addWidget(self.custom_docs_picker)
         settings_layout.addWidget(self.custom_docs_section)
 
+        # --- Index Status Panel (shown when the database path is known) ---
+        self.health_panel = QWidget()
+        self.health_panel.hide()
+        health_main_layout = QVBoxLayout(self.health_panel)
+        health_main_layout.setContentsMargins(0, 8, 0, 0)
+        health_main_layout.setSpacing(6)
+
+        # Header row: title + refresh button
+        health_hdr = QWidget()
+        health_hdr_layout = QHBoxLayout(health_hdr)
+        health_hdr_layout.setContentsMargins(0, 0, 0, 0)
+        health_hdr_layout.setSpacing(8)
+
+        health_title_lbl = QLabel("INDEX STATUS")
+        health_title_lbl.setStyleSheet(
+            "font-size: 10px; font-weight: bold; color: #555555; letter-spacing: 1px;"
+        )
+        health_hdr_layout.addWidget(health_title_lbl)
+        health_hdr_layout.addStretch()
+
+        self.health_refresh_btn = QPushButton("↻ Refresh")
+        self.health_refresh_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #888888; "
+            "border: 1px solid #444444; border-radius: 4px; padding: 2px 10px; font-size: 11px; } "
+            "QPushButton:hover { background-color: #3a3a3a; color: white; }"
+        )
+        self.health_refresh_btn.setFixedHeight(22)
+        self.health_refresh_btn.clicked.connect(self.refresh_health)
+        health_hdr_layout.addWidget(self.health_refresh_btn)
+        health_main_layout.addWidget(health_hdr)
+
+        # Four table cards side by side
+        health_cards_container = QWidget()
+        health_cards_layout = QHBoxLayout(health_cards_container)
+        health_cards_layout.setContentsMargins(0, 0, 0, 0)
+        health_cards_layout.setSpacing(8)
+
+        _TABLE_META = [
+            ("hytale_methods.lance", "Server Code"),
+            ("hytale_client_ui.lance", "Client UI"),
+            ("hytale_gamedata.lance", "Game Data"),
+            ("hytale_docs.lance", "Docs"),
+        ]
+        self._health_cards: dict = {}
+        for table_file, display_name in _TABLE_META:
+            card, labels = self._create_health_card(display_name)
+            self._health_cards[table_file] = labels
+            health_cards_layout.addWidget(card)
+
+        health_main_layout.addWidget(health_cards_container)
+        settings_layout.addWidget(self.health_panel)
+
         settings_layout.addStretch()
         self.stack.addWidget(self.settings_view)
 
@@ -4445,6 +4497,127 @@ class DatabasePage(QWidget):
 
         # Select Build by default
         self._select_mode("build")
+
+    # ------------------------------------------------------------------
+    # Card selection helpers
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Index health dashboard
+    # ------------------------------------------------------------------
+
+    def _create_health_card(self, name: str):
+        """Create a compact table-health card. Returns (widget, labels_dict)."""
+        card = QWidget()
+        card.setFixedHeight(78)
+        card.setStyleSheet(
+            "QWidget { background-color: #1a1a1a; border: 1px solid #333333; "
+            "border-radius: 6px; }"
+        )
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(9, 7, 9, 7)
+        layout.setSpacing(2)
+
+        name_lbl = QLabel(name.upper())
+        name_lbl.setStyleSheet(
+            "font-size: 9px; font-weight: bold; color: #555555; letter-spacing: 1px;"
+        )
+        layout.addWidget(name_lbl)
+
+        status_lbl = QLabel("—")
+        status_lbl.setStyleSheet("font-size: 12px; color: #666666;")
+        layout.addWidget(status_lbl)
+
+        size_lbl = QLabel("")
+        size_lbl.setStyleSheet("font-size: 10px; color: #555555;")
+        layout.addWidget(size_lbl)
+
+        date_lbl = QLabel("")
+        date_lbl.setStyleSheet("font-size: 10px; color: #555555;")
+        layout.addWidget(date_lbl)
+
+        layout.addStretch()
+        return card, {"status": status_lbl, "size": size_lbl, "date": date_lbl}
+
+    def _get_db_path(self):
+        """Return the lancedb directory Path for the current provider, or None."""
+        if not self._toolkit_path or not self._provider:
+            return None
+        return Path(self._toolkit_path) / "hytale-rag" / "data" / self._provider / "lancedb"
+
+    @staticmethod
+    def _get_dir_size(p) -> int:
+        total = 0
+        try:
+            for entry in p.rglob("*"):
+                if entry.is_file():
+                    try:
+                        total += entry.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return total
+
+    @staticmethod
+    def _format_bytes(b: int) -> str:
+        if b < 1024:
+            return f"{b} B"
+        if b < 1024 * 1024:
+            return f"{b / 1024:.1f} KB"
+        if b < 1024 * 1024 * 1024:
+            return f"{b / (1024 * 1024):.1f} MB"
+        return f"{b / (1024 * 1024 * 1024):.2f} GB"
+
+    def refresh_health(self):
+        """Read the filesystem and update health card labels."""
+        db_path = self._get_db_path()
+        if db_path is None:
+            self.health_panel.hide()
+            return
+        self.health_panel.show()
+
+        _TABLE_KEYS = [
+            "hytale_methods.lance",
+            "hytale_client_ui.lance",
+            "hytale_gamedata.lance",
+            "hytale_docs.lance",
+        ]
+        for table_file in _TABLE_KEYS:
+            labels = self._health_cards.get(table_file)
+            if not labels:
+                continue
+
+            table_path = db_path / table_file
+            if not table_path.exists():
+                labels["status"].setText("✗ Not indexed")
+                labels["status"].setStyleSheet("font-size: 11px; color: #EF4444;")
+                labels["size"].setText("")
+                labels["date"].setText("")
+                continue
+
+            labels["status"].setText("✓ Indexed")
+            labels["status"].setStyleSheet(
+                "font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 11px; color: #22C55E;"
+            )
+
+            # Disk size
+            size_bytes = self._get_dir_size(table_path)
+            labels["size"].setText(self._format_bytes(size_bytes))
+
+            # Last modified: newest .manifest mtime in _versions/
+            versions_dir = table_path / "_versions"
+            last_mod = None
+            if versions_dir.exists():
+                manifests = list(versions_dir.glob("*.manifest"))
+                if manifests:
+                    last_mod = max(m.stat().st_mtime for m in manifests)
+            if last_mod:
+                from datetime import datetime as _dt
+                dt = _dt.fromtimestamp(last_mod)
+                labels["date"].setText(dt.strftime("%b %d, %Y"))
+            else:
+                labels["date"].setText("")
 
     # ------------------------------------------------------------------
     # Card selection helpers
@@ -4551,6 +4724,8 @@ class DatabasePage(QWidget):
                 f"font-size: 10px; color: {badge_color}; background-color: {badge_color}25; "
                 f"padding: 3px 8px; border-radius: 4px; font-weight: bold;"
             )
+
+        self.refresh_health()
 
         if self._button_callback:
             self._button_callback()
@@ -4826,6 +5001,7 @@ else:
             self.desc.setText("Database build completed!")
             self.progress_label.setText("Complete!")
             self.progress_label.setStyleSheet("font-size: 12px; color: #22C55E; font-weight: bold;")
+            self.refresh_health()
         else:
             self._finish_with_error(f"Process failed with exit code {exit_code}")
 
@@ -6634,7 +6810,7 @@ class SetupWizard(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Hytale Toolkit Setup")
-        self.setFixedSize(900, 660)
+        self.setFixedSize(990, 726)
 
         # Dark theme
         self.setStyleSheet("""
@@ -6703,7 +6879,7 @@ class SetupWizard(QMainWindow):
 
         # Button bar
         button_bar = QWidget()
-        button_bar.setFixedHeight(60)
+        button_bar.setFixedHeight(66)
         button_layout = QHBoxLayout(button_bar)
         button_layout.setContentsMargins(20, 10, 20, 15)
 

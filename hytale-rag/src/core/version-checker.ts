@@ -5,7 +5,7 @@
  * the latest GitHub release. Results are cached to avoid excessive API calls.
  */
 
-const GITHUB_REPO = "logan-mcduffie/Hytale-Toolkit";
+const GITHUB_REPO = "Lighttzz/Hytale-Toolkit";
 const CACHE_TTL_MS = 3600000; // 1 hour
 const FETCH_TIMEOUT_MS = 5000; // 5 seconds
 

@@ -16,6 +16,7 @@ import { formatCodeStats } from "../../core/tools/code-stats.js";
 import { formatClientUIStats, type ClientUIStats } from "../../core/tools/client-code-stats.js";
 import { formatGameDataStats } from "../../core/tools/gamedata-stats.js";
 import { formatDocsStats, type DocsStats } from "../../core/tools/docs-stats.js";
+import { formatIndexHealth, type IndexHealthData } from "../../core/tools/index-health.js";
 import type { CodeSearchResult, CodeStats, GameDataSearchResult, GameDataStats, DocsSearchResult } from "../../core/types.js";
 import type { ClientUISearchResult } from "../../core/tools/search-client-code.js";
 import type { VersionInfo } from "../../core/version-checker.js";
@@ -41,6 +42,8 @@ function formatToolResult(toolName: string, data: unknown, versionInfo?: Version
       return formatGameDataStats(data as GameDataStats, versionInfo);
     case "hytale_docs_stats":
       return formatDocsStats(data as DocsStats, versionInfo);
+    case "hytale_index_health":
+      return formatIndexHealth(data as IndexHealthData);
     default:
       return JSON.stringify(data, null, 2);
   }

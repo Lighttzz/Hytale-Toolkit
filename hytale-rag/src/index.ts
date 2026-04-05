@@ -23,6 +23,7 @@ import { codeStatsTool } from "./core/tools/code-stats.js";
 import { clientCodeStatsTool } from "./core/tools/client-code-stats.js";
 import { gameDataStatsTool } from "./core/tools/gamedata-stats.js";
 import { docsStatsTool } from "./core/tools/docs-stats.js";
+import { indexHealthTool } from "./core/tools/index-health.js";
 import { startMCPServer } from "./servers/mcp/index.js";
 import { createRESTServer, startRESTServer } from "./servers/rest/index.js";
 import { createOpenAIServer, startOpenAIServer } from "./servers/openai/index.js";
@@ -340,6 +341,7 @@ async function main() {
   registry.register(clientCodeStatsTool);
   registry.register(gameDataStatsTool);
   registry.register(docsStatsTool);
+  registry.register(indexHealthTool);
   logger.info(`Registered ${registry.getAll().length} tools: ${registry.getAll().map(t => t.name).join(", ")}`);
 
   // Initialize version checker (non-blocking background check)
