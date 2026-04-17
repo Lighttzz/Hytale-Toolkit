@@ -36,7 +36,32 @@ vectorStore:
 tables:
   # Table names for stored data
   code: hytale_methods
+  clientUI: hytale_client_ui
   gamedata: hytale_gamedata
+  docs: hytale_docs
+
+retrieval:
+  # Prefer short, targeted payloads unless the caller asks for full content.
+  compactResponses: true
+  # Soft response budget used by compact formatters.
+  maxPackedResponseChars: 8000
+  maxPackedResponseTokens: 2000
+  # Cache repeated query embeddings and processed responses to save tokens and latency.
+  queryEmbeddingCacheTtlMs: 300000
+  responseCacheTtlMs: 60000
+  domains:
+    code:
+      minScore: 0.12
+      candidatePoolSize: 12
+    clientUI:
+      minScore: 0.12
+      candidatePoolSize: 12
+    gamedata:
+      minScore: 0.12
+      candidatePoolSize: 12
+    docs:
+      minScore: 0.12
+      candidatePoolSize: 12
 
 api:
   # Rate limiting (for REST/OpenAI servers)

@@ -7,6 +7,15 @@
 import { searchClientCodeSchema, type SearchClientCodeInput } from "../schemas.js";
 import type { ToolDefinition, ToolContext, ToolResult } from "./index.js";
 import { resolveClientDataPath } from "../../utils/paths.js";
+import {
+  compactContent,
+  getCachedQueryEmbedding,
+  getCachedToolResponse,
+  getEffectiveDetail,
+  getFriendlyMissingTableMessage,
+  rerankAndLimit,
+  setCachedToolResponse,
+} from "./retrieval.js";
 
 /**
  * Client UI search result
@@ -20,6 +29,9 @@ export interface ClientUISearchResult {
   content: string;
   category?: string;
   score: number;
+  matchReasons?: string[];
+  truncated?: boolean;
+  detail?: "compact" | "balanced" | "full";
 }
 
 /**
@@ -30,7 +42,8 @@ export const searchClientCodeTool: ToolDefinition<SearchClientCodeInput, ClientU
   description:
     "Search Hytale client UI files using semantic search. " +
     "Use this to find UI templates (.xaml), UI components (.ui), and NodeEditor definitions. " +
-    "Useful for modifying game UI appearance like inventory layout, hotbar, health bars, etc.",
+    "Useful for modifying game UI appearance like inventory layout, hotbar, health bars, etc. " +
+    "Returns compact excerpts by default.",
   inputSchema: searchClientCodeSchema,
 
   async handler(input, context): Promise<ToolResult<ClientUISearchResult[]>> {
@@ -42,11 +55,18 @@ export const searchClientCodeTool: ToolDefinition<SearchClientCodeInput, ClientU
       };
     }
 
-    // Clamp limit
+    const detail = getEffectiveDetail(input.detail, context);
     const limit = Math.min(Math.max(1, input.limit ?? 5), 20);
+    const cacheInput = { ...input, detail, limit };
+    const cached = getCachedToolResponse<ClientUISearchResult[]>(searchClientCodeTool.name, cacheInput, context);
+    if (cached) {
+      return { success: true, data: cached };
+    }
 
-    // Get embedding for the query (use "text" since UI files are markup, not code)
-    const queryVector = await context.embedding.embedQuery(input.query, "text");
+    const domainConfig = context.config.retrieval.domains.clientUI;
+    const candidateLimit = Math.max(limit, domainConfig.candidatePoolSize);
+
+    const queryVector = await getCachedQueryEmbedding(context, input.query, "text");
 
     // Build filter
     const filter = input.classFilter
@@ -54,25 +74,58 @@ export const searchClientCodeTool: ToolDefinition<SearchClientCodeInput, ClientU
       : undefined;
 
     // Search
-    const results = await context.vectorStore.search<ClientUISearchResult>(
-      context.config.tables.clientUI,
-      queryVector,
-      { limit, filter }
-    );
+    let results;
+    try {
+      results = await context.vectorStore.search<ClientUISearchResult>(
+        context.config.tables.clientUI,
+        queryVector,
+        { limit: candidateLimit, filter, minScore: domainConfig.minScore }
+      );
 
-    // Map results
-    const data: ClientUISearchResult[] = results.map((r) => ({
-      id: r.data.id,
-      type: r.data.type,
-      name: r.data.name,
-      filePath: r.data.filePath,
-      relativePath: r.data.relativePath,
-      content: r.data.content,
-      category: r.data.category,
-      score: r.score,
-    }));
+      if (results.length === 0 && domainConfig.minScore > 0) {
+        results = await context.vectorStore.search<ClientUISearchResult>(
+          context.config.tables.clientUI,
+          queryVector,
+          { limit: candidateLimit, filter }
+        );
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: getFriendlyMissingTableMessage(context.config.tables.clientUI, error),
+      };
+    }
 
-    return { success: true, data };
+    const reranked = rerankAndLimit(results, input.query, {
+      limit,
+      getSearchText: (data) => [
+        data.name,
+        data.relativePath,
+        data.category,
+        data.type,
+        data.content.slice(0, 2200),
+      ].join("\n"),
+      getDeduplicationKey: (data) => data.relativePath,
+    });
+
+    const data: ClientUISearchResult[] = reranked.map(({ result, matchReasons }) => {
+      const compacted = compactContent(result.data.content, input.query, detail, "markup");
+      return {
+        id: result.data.id,
+        type: result.data.type,
+        name: result.data.name,
+        filePath: result.data.filePath,
+        relativePath: result.data.relativePath,
+        content: compacted.value,
+        category: result.data.category,
+        score: result.score,
+        matchReasons,
+        truncated: compacted.truncated,
+        detail,
+      };
+    });
+
+    return { success: true, data: setCachedToolResponse(searchClientCodeTool.name, cacheInput, data, context) };
   },
 };
 
@@ -93,6 +146,7 @@ export function formatClientUIResults(results: ClientUISearchResult[]): string {
 **Category:** ${r.category || "General"}
 **Path:** ${fullPath}
 **Relevance:** ${(r.score * 100).toFixed(1)}%
+    ${r.matchReasons && r.matchReasons.length > 0 ? `**Why it matched:** ${r.matchReasons.join("; ")}\n` : ""}${r.truncated ? "**Payload:** excerpted for token efficiency\n" : ""}
 
 \`\`\`${fileType}
 ${r.content}

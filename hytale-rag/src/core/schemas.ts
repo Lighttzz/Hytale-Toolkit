@@ -7,6 +7,9 @@
 
 import { z } from "zod";
 
+export const SEARCH_DETAIL_LEVELS = ["compact", "balanced", "full"] as const;
+export type SearchDetailLevel = (typeof SEARCH_DETAIL_LEVELS)[number];
+
 /**
  * Valid game data types for filtering
  */
@@ -60,6 +63,10 @@ export const searchCodeSchema = z.object({
     .string()
     .optional()
     .describe("Filter results to a specific class name"),
+  detail: z
+    .enum(SEARCH_DETAIL_LEVELS)
+    .optional()
+    .describe("Response detail level: compact, balanced, or full"),
 });
 
 export type SearchCodeInput = z.infer<typeof searchCodeSchema>;
@@ -84,6 +91,10 @@ export const searchClientCodeSchema = z.object({
     .string()
     .optional()
     .describe("Filter results to a specific category (e.g., DesignSystem, InGame, MainMenu)"),
+  detail: z
+    .enum(SEARCH_DETAIL_LEVELS)
+    .optional()
+    .describe("Response detail level: compact, balanced, or full"),
 });
 
 export type SearchClientCodeInput = z.infer<typeof searchClientCodeSchema>;
@@ -109,6 +120,10 @@ export const searchGameDataSchema = z.object({
     .optional()
     .default(5)
     .describe("Number of results (default 5, max 20)"),
+  detail: z
+    .enum(SEARCH_DETAIL_LEVELS)
+    .optional()
+    .describe("Response detail level: compact, balanced, or full"),
 });
 
 export type SearchGameDataInput = z.infer<typeof searchGameDataSchema>;
@@ -147,9 +162,42 @@ export const searchDocsSchema = z.object({
     .optional()
     .default(5)
     .describe("Number of results (default 5, max 20)"),
+  detail: z
+    .enum(SEARCH_DETAIL_LEVELS)
+    .optional()
+    .describe("Response detail level: compact, balanced, or full"),
 });
 
 export type SearchDocsInput = z.infer<typeof searchDocsSchema>;
+
+export const SEARCH_KNOWLEDGE_DOMAINS = ["auto", "code", "client_ui", "gamedata", "docs"] as const;
+export type SearchKnowledgeDomain = (typeof SEARCH_KNOWLEDGE_DOMAINS)[number];
+
+export const searchKnowledgeSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .describe("Natural language question or task about Hytale code, UI, docs, or game data"),
+  domain: z
+    .enum(SEARCH_KNOWLEDGE_DOMAINS)
+    .optional()
+    .default("auto")
+    .describe("Domain to search. Use auto when you are unsure."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .default(5)
+    .describe("Maximum number of compact results to return"),
+  detail: z
+    .enum(SEARCH_DETAIL_LEVELS)
+    .optional()
+    .describe("Response detail level: compact, balanced, or full"),
+});
+
+export type SearchKnowledgeInput = z.infer<typeof searchKnowledgeSchema>;
 
 /**
  * Empty schema for tools with no parameters

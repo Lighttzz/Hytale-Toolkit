@@ -19,6 +19,7 @@ import { searchCodeTool } from "./core/tools/search-code.js";
 import { searchClientCodeTool } from "./core/tools/search-client-code.js";
 import { searchGameDataTool } from "./core/tools/search-gamedata.js";
 import { searchDocsTool } from "./core/tools/search-docs.js";
+import { searchKnowledgeTool } from "./core/tools/search-knowledge.js";
 import { codeStatsTool } from "./core/tools/code-stats.js";
 import { clientCodeStatsTool } from "./core/tools/client-code-stats.js";
 import { gameDataStatsTool } from "./core/tools/gamedata-stats.js";
@@ -119,6 +120,7 @@ const EXPECTED_TABLES = [
   { name: "hytale_methods.lance", minSize: 50_000_000 },    // ~50MB minimum for code
   { name: "hytale_client_ui.lance", minSize: 1_000_000 },   // ~1MB minimum for UI
   { name: "hytale_gamedata.lance", minSize: 5_000_000 },    // ~5MB minimum for gamedata
+  { name: "hytale_docs.lance", minSize: 1_000_000 },        // ~1MB minimum for docs
 ];
 
 /**
@@ -333,6 +335,7 @@ async function main() {
   // Create tool registry and register tools
   logger.section("Tools");
   const registry = new ToolRegistry();
+  registry.register(searchKnowledgeTool);
   registry.register(searchCodeTool);
   registry.register(searchClientCodeTool);
   registry.register(searchGameDataTool);

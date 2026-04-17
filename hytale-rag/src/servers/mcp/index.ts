@@ -12,6 +12,7 @@ import { formatCodeResults } from "../../core/tools/search-code.js";
 import { formatClientUIResults } from "../../core/tools/search-client-code.js";
 import { formatGameDataResults } from "../../core/tools/search-gamedata.js";
 import { formatDocsResults } from "../../core/tools/search-docs.js";
+import { formatKnowledgeResults, type KnowledgeSearchResponse } from "../../core/tools/search-knowledge.js";
 import { formatCodeStats } from "../../core/tools/code-stats.js";
 import { formatClientUIStats, type ClientUIStats } from "../../core/tools/client-code-stats.js";
 import { formatGameDataStats } from "../../core/tools/gamedata-stats.js";
@@ -34,6 +35,8 @@ function formatToolResult(toolName: string, data: unknown, versionInfo?: Version
       return formatGameDataResults(data as GameDataSearchResult[]);
     case "search_hytale_docs":
       return formatDocsResults(data as DocsSearchResult[]);
+    case "search_hytale_knowledge":
+      return formatKnowledgeResults(data as KnowledgeSearchResponse);
     case "hytale_code_stats":
       return formatCodeStats(data as CodeStats, versionInfo);
     case "hytale_client_code_stats":

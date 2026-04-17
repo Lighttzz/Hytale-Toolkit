@@ -260,6 +260,19 @@ export function getMinimalConfig(overrides?: Partial<AppConfig>): AppConfig {
       path: getDefaultDataPath(embeddingProvider),
     },
     tables: { code: "hytale_methods", clientUI: "hytale_client_ui", gamedata: "hytale_gamedata", docs: "hytale_docs" },
+    retrieval: {
+      compactResponses: true,
+      maxPackedResponseChars: 8000,
+      maxPackedResponseTokens: 2000,
+      queryEmbeddingCacheTtlMs: 300000,
+      responseCacheTtlMs: 60000,
+      domains: {
+        code: { minScore: 0.12, candidatePoolSize: 12 },
+        clientUI: { minScore: 0.12, candidatePoolSize: 12 },
+        gamedata: { minScore: 0.12, candidatePoolSize: 12 },
+        docs: { minScore: 0.12, candidatePoolSize: 12 },
+      },
+    },
     api: {
       rateLimit: { windowMs: 60000, max: 100 },
       auth: { enabled: false, apiKeys: [] },

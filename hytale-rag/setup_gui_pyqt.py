@@ -162,7 +162,7 @@ def _clean_subprocess_env() -> dict | None:
 # Update Checker
 # =============================================================================
 
-GITHUB_REPO = "logan-mcduffie/Hytale-Toolkit"
+GITHUB_REPO = "Lighttzz/Hytale-Toolkit"
 RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 
@@ -4418,6 +4418,16 @@ class DatabasePage(QWidget):
         self.health_refresh_btn.setFixedHeight(22)
         self.health_refresh_btn.clicked.connect(self.refresh_health)
         health_hdr_layout.addWidget(self.health_refresh_btn)
+
+        self.health_reindex_btn = QPushButton("↻ Re-index")
+        self.health_reindex_btn.setStyleSheet(
+            "QPushButton { background-color: #1f6aa5; color: white; "
+            "border: none; border-radius: 4px; padding: 2px 10px; font-size: 11px; } "
+            "QPushButton:hover { background-color: #2980b9; }"
+        )
+        self.health_reindex_btn.setFixedHeight(22)
+        self.health_reindex_btn.clicked.connect(self._start_build_locally)
+        health_hdr_layout.addWidget(self.health_reindex_btn)
         health_main_layout.addWidget(health_hdr)
 
         # Four table cards side by side

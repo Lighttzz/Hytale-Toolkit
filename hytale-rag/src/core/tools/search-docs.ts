@@ -7,6 +7,15 @@
 import { searchDocsSchema, type SearchDocsInput } from "../schemas.js";
 import type { ToolDefinition, ToolContext, ToolResult } from "./index.js";
 import type { DocsSearchResult } from "../types.js";
+import {
+  compactContent,
+  getCachedQueryEmbedding,
+  getCachedToolResponse,
+  getEffectiveDetail,
+  getFriendlyMissingTableMessage,
+  rerankAndLimit,
+  setCachedToolResponse,
+} from "./retrieval.js";
 
 /**
  * Search documentation tool definition
@@ -16,7 +25,8 @@ export const searchDocsTool: ToolDefinition<SearchDocsInput, DocsSearchResult[]>
   description:
     "Search HytaleModding.dev documentation using semantic search. " +
     "Use this to find modding guides, tutorials, and reference documentation. " +
-    "Covers topics like plugin development, ECS, block creation, commands, events, and more.",
+    "Covers topics like plugin development, ECS, block creation, commands, events, and more. " +
+    "Returns compact excerpts by default.",
   inputSchema: searchDocsSchema,
 
   async handler(input, context): Promise<ToolResult<DocsSearchResult[]>> {
@@ -28,11 +38,18 @@ export const searchDocsTool: ToolDefinition<SearchDocsInput, DocsSearchResult[]>
       };
     }
 
-    // Clamp limit
+    const detail = getEffectiveDetail(input.detail, context);
     const limit = Math.min(Math.max(1, input.limit ?? 5), 20);
+    const cacheInput = { ...input, detail, limit };
+    const cached = getCachedToolResponse<DocsSearchResult[]>(searchDocsTool.name, cacheInput, context);
+    if (cached) {
+      return { success: true, data: cached };
+    }
 
-    // Get embedding for the query (use "text" since docs are prose, not code)
-    const queryVector = await context.embedding.embedQuery(input.query, "text");
+    const domainConfig = context.config.retrieval.domains.docs;
+    const candidateLimit = Math.max(limit, domainConfig.candidatePoolSize);
+
+    const queryVector = await getCachedQueryEmbedding(context, input.query, "text");
 
     // Build filter for type if not "all"
     const filter = input.type && input.type !== "all"
@@ -40,26 +57,59 @@ export const searchDocsTool: ToolDefinition<SearchDocsInput, DocsSearchResult[]>
       : undefined;
 
     // Search
-    const results = await context.vectorStore.search<DocsSearchResult>(
-      context.config.tables.docs,
-      queryVector,
-      { limit, filter }
-    );
+    let results;
+    try {
+      results = await context.vectorStore.search<DocsSearchResult>(
+        context.config.tables.docs,
+        queryVector,
+        { limit: candidateLimit, filter, minScore: domainConfig.minScore }
+      );
 
-    // Map results
-    const data: DocsSearchResult[] = results.map((r) => ({
-      id: r.data.id,
-      type: r.data.type,
-      title: r.data.title,
-      filePath: r.data.filePath,
-      relativePath: r.data.relativePath,
-      content: r.data.content,
-      category: r.data.category,
-      description: r.data.description,
-      score: r.score,
-    }));
+      if (results.length === 0 && domainConfig.minScore > 0) {
+        results = await context.vectorStore.search<DocsSearchResult>(
+          context.config.tables.docs,
+          queryVector,
+          { limit: candidateLimit, filter }
+        );
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: getFriendlyMissingTableMessage(context.config.tables.docs, error),
+      };
+    }
 
-    return { success: true, data };
+    const reranked = rerankAndLimit(results, input.query, {
+      limit,
+      getSearchText: (data) => [
+        data.title,
+        data.relativePath,
+        data.category,
+        data.description,
+        data.content.slice(0, 2400),
+      ].join("\n"),
+      getDeduplicationKey: (data) => data.relativePath,
+    });
+
+    const data: DocsSearchResult[] = reranked.map(({ result, matchReasons }) => {
+      const compacted = compactContent(result.data.content, input.query, detail, "text");
+      return {
+        id: result.data.id,
+        type: result.data.type,
+        title: result.data.title,
+        filePath: result.data.filePath,
+        relativePath: result.data.relativePath,
+        content: compacted.value,
+        category: result.data.category,
+        description: result.data.description,
+        score: result.score,
+        matchReasons,
+        truncated: compacted.truncated,
+        detail,
+      };
+    });
+
+    return { success: true, data: setCachedToolResponse(searchDocsTool.name, cacheInput, data, context) };
   },
 };
 
@@ -85,17 +135,18 @@ export function formatDocsResults(results: DocsSearchResult[]): string {
         metadata.push(`**Description:** ${r.description}`);
       }
 
-      // Truncate content if too long (keep first ~2000 chars)
-      let content = r.content;
-      if (content.length > 2000) {
-        content = content.substring(0, 2000) + "\n\n... (content truncated)";
+      if (r.matchReasons && r.matchReasons.length > 0) {
+        metadata.push(`**Why it matched:** ${r.matchReasons.join("; ")}`);
+      }
+      if (r.truncated) {
+        metadata.push("**Payload:** excerpted for token efficiency");
       }
 
       return `${header}
 ${metadata.join("\n")}
 
 \`\`\`markdown
-${content}
+${r.content}
 \`\`\``;
     })
     .join("\n\n---\n\n");
