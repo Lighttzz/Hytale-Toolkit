@@ -76,39 +76,6 @@ export const tablesConfigSchema = z.object({
 });
 
 /**
- * Retrieval configuration per indexed domain.
- */
-export const retrievalDomainConfigSchema = z.object({
-  /** Minimum semantic score before reranking. A zero value disables filtering. */
-  minScore: z.number().min(0).max(1).default(0.12),
-  /** Number of vector candidates to fetch before local reranking/diversification. */
-  candidatePoolSize: z.number().int().min(1).max(50).default(12),
-});
-
-/**
- * Retrieval quality and response shaping configuration.
- */
-export const retrievalConfigSchema = z.object({
-  /** Prefer compact excerpts unless the caller explicitly asks for full payloads. */
-  compactResponses: z.boolean().default(true),
-  /** Soft character budget for packed MCP responses. */
-  maxPackedResponseChars: z.number().int().min(500).default(8000),
-  /** Soft token budget for packed MCP responses. */
-  maxPackedResponseTokens: z.number().int().min(100).default(2000),
-  /** TTL for query embedding cache entries. */
-  queryEmbeddingCacheTtlMs: z.number().int().min(0).default(300000),
-  /** TTL for post-processed search result cache entries. */
-  responseCacheTtlMs: z.number().int().min(0).default(60000),
-  /** Domain-specific retrieval knobs. */
-  domains: z.object({
-    code: retrievalDomainConfigSchema.default({}),
-    clientUI: retrievalDomainConfigSchema.default({}),
-    gamedata: retrievalDomainConfigSchema.default({}),
-    docs: retrievalDomainConfigSchema.default({}),
-  }).default({}),
-});
-
-/**
  * API rate limiting configuration schema
  */
 export const rateLimitConfigSchema = z.object({
@@ -150,8 +117,6 @@ export const configSchema = z.object({
   vectorStore: vectorStoreConfigSchema.default({}),
   /** Table names */
   tables: tablesConfigSchema.default({}),
-  /** Retrieval settings */
-  retrieval: retrievalConfigSchema.default({}),
   /** API settings */
   api: apiConfigSchema.default({}),
 });
@@ -163,8 +128,6 @@ export type ServerConfig = z.infer<typeof serverConfigSchema>;
 export type EmbeddingConfig = z.infer<typeof embeddingConfigSchema>;
 export type VectorStoreConfig = z.infer<typeof vectorStoreConfigSchema>;
 export type TablesConfig = z.infer<typeof tablesConfigSchema>;
-export type RetrievalDomainConfig = z.infer<typeof retrievalDomainConfigSchema>;
-export type RetrievalConfig = z.infer<typeof retrievalConfigSchema>;
 export type RateLimitConfig = z.infer<typeof rateLimitConfigSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;
 export type ApiConfig = z.infer<typeof apiConfigSchema>;

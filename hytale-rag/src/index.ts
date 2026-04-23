@@ -19,7 +19,6 @@ import { searchCodeTool } from "./core/tools/search-code.js";
 import { searchClientCodeTool } from "./core/tools/search-client-code.js";
 import { searchGameDataTool } from "./core/tools/search-gamedata.js";
 import { searchDocsTool } from "./core/tools/search-docs.js";
-import { searchKnowledgeTool } from "./core/tools/search-knowledge.js";
 import { codeStatsTool } from "./core/tools/code-stats.js";
 import { clientCodeStatsTool } from "./core/tools/client-code-stats.js";
 import { gameDataStatsTool } from "./core/tools/gamedata-stats.js";
@@ -153,7 +152,7 @@ function validateDatabase(dbPath: string): string | undefined {
 
   // Check if database directory exists
   if (!fs.existsSync(dbPath)) {
-    return `Database not found at: ${dbPath}\n\nThe LanceDB database is required for semantic search.\n\nTo fix this:\n1. Download lancedb-{provider}-all.tar.gz from ${releaseUrl}\n2. Extract it to the data/ folder\n\nExpected structure: data/{provider}/lancedb/hytale_methods.lance/`;
+    return `Database not found at: ${dbPath}\n\nThe LanceDB database is required for semantic search.\n\nTo fix this:\n1. Download lancedb-{provider}-all.tar.gz from ${releaseUrl}\n2. Extract it to the data/ folder\n\nExpected structure:\n  data/{provider}/lancedb/hytale_methods.lance/\n  data/{provider}/lancedb/hytale_client_ui.lance/\n  data/{provider}/lancedb/hytale_gamedata.lance/\n  data/{provider}/lancedb/hytale_docs.lance/`;
   }
 
   // Check each expected table
@@ -335,7 +334,6 @@ async function main() {
   // Create tool registry and register tools
   logger.section("Tools");
   const registry = new ToolRegistry();
-  registry.register(searchKnowledgeTool);
   registry.register(searchCodeTool);
   registry.register(searchClientCodeTool);
   registry.register(searchGameDataTool);

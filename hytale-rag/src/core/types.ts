@@ -56,9 +56,6 @@ export interface CodeSearchResult {
   lineStart: number;
   lineEnd: number;
   score: number;
-  matchReasons?: string[];
-  truncated?: boolean;
-  detail?: "compact" | "balanced" | "full";
 }
 
 /**

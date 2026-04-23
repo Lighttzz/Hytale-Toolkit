@@ -1359,8 +1359,8 @@ class HytalePathPage(QWidget):
         if clean_env:
             self._process.setProcessEnvironment(clean_env)
 
-        # Use git clone
-        repo_url = "https://github.com/logan-mcduffie/Hytale-Toolkit.git"
+        # Use git clone (build URL from GITHUB_REPO constant)
+        repo_url = f"https://github.com/{GITHUB_REPO}.git"
         folder_name = toolkit_path.name
 
         # On Windows, use cmd /c to properly find git in PATH

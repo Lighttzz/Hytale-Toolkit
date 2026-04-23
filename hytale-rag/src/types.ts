@@ -66,9 +66,6 @@ export interface GameDataSearchResult {
   tags: string[];
   parentId?: string;
   score: number;
-  matchReasons?: string[];
-  truncated?: boolean;
-  detail?: "compact" | "balanced" | "full";
 }
 
 // Stats about indexed game data
@@ -116,9 +113,6 @@ export interface DocsSearchResult {
   category?: string;
   description?: string;
   score: number;
-  matchReasons?: string[];
-  truncated?: boolean;
-  detail?: "compact" | "balanced" | "full";
 }
 
 // Stats about indexed documentation

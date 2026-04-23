@@ -8,15 +8,6 @@ import { searchCodeSchema, type SearchCodeInput } from "../schemas.js";
 import type { ToolDefinition, ToolContext, ToolResult } from "./index.js";
 import type { CodeSearchResult } from "../types.js";
 import { resolveCodePath } from "../../utils/paths.js";
-import {
-  compactContent,
-  getCachedQueryEmbedding,
-  getCachedToolResponse,
-  getEffectiveDetail,
-  getFriendlyMissingTableMessage,
-  rerankAndLimit,
-  setCachedToolResponse,
-} from "./retrieval.js";
 
 /**
  * Search code tool definition
@@ -26,8 +17,7 @@ export const searchCodeTool: ToolDefinition<SearchCodeInput, CodeSearchResult[]>
   description:
     "Search the decompiled Hytale codebase using semantic search. " +
     "Use this to find methods, classes, or functionality by describing what you're looking for. " +
-    "Returns relevant Java methods with compact excerpts by default. " +
-    "Set detail='full' when you need the full method body.",
+    "Returns relevant Java methods with their full source code.",
   inputSchema: searchCodeSchema,
 
   async handler(input, context): Promise<ToolResult<CodeSearchResult[]>> {
@@ -39,18 +29,11 @@ export const searchCodeTool: ToolDefinition<SearchCodeInput, CodeSearchResult[]>
       };
     }
 
-    const detail = getEffectiveDetail(input.detail, context);
+    // Clamp limit
     const limit = Math.min(Math.max(1, input.limit ?? 5), 20);
-    const cacheInput = { ...input, detail, limit };
-    const cached = getCachedToolResponse<CodeSearchResult[]>(searchCodeTool.name, cacheInput, context);
-    if (cached) {
-      return { success: true, data: cached };
-    }
 
-    const domainConfig = context.config.retrieval.domains.code;
-    const candidateLimit = Math.max(limit, domainConfig.candidatePoolSize);
-
-    const queryVector = await getCachedQueryEmbedding(context, input.query, "code");
+    // Get embedding for the query
+    const queryVector = await context.embedding.embedQuery(input.query, "code");
 
     // Build filter
     const filter = input.classFilter
@@ -58,61 +41,27 @@ export const searchCodeTool: ToolDefinition<SearchCodeInput, CodeSearchResult[]>
       : undefined;
 
     // Search
-    let results;
-    try {
-      results = await context.vectorStore.search<CodeSearchResult>(
-        context.config.tables.code,
-        queryVector,
-        { limit: candidateLimit, filter, minScore: domainConfig.minScore }
-      );
+    const results = await context.vectorStore.search<CodeSearchResult>(
+      context.config.tables.code,
+      queryVector,
+      { limit, filter }
+    );
 
-      if (results.length === 0 && domainConfig.minScore > 0) {
-        results = await context.vectorStore.search<CodeSearchResult>(
-          context.config.tables.code,
-          queryVector,
-          { limit: candidateLimit, filter }
-        );
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: getFriendlyMissingTableMessage(context.config.tables.code, error),
-      };
-    }
+    // Map results
+    const data: CodeSearchResult[] = results.map((r) => ({
+      id: r.data.id,
+      className: r.data.className,
+      packageName: r.data.packageName,
+      methodName: r.data.methodName,
+      methodSignature: r.data.methodSignature,
+      content: r.data.content,
+      filePath: r.data.filePath,
+      lineStart: r.data.lineStart,
+      lineEnd: r.data.lineEnd,
+      score: r.score,
+    }));
 
-    const reranked = rerankAndLimit(results, input.query, {
-      limit,
-      getSearchText: (data) => [
-        data.className,
-        data.methodName,
-        data.methodSignature,
-        data.packageName,
-        data.filePath,
-        data.content.slice(0, 2200),
-      ].join("\n"),
-      getDeduplicationKey: (data) => `${data.className}:${data.methodName}:${data.filePath}`,
-    });
-
-    const data: CodeSearchResult[] = reranked.map(({ result, matchReasons }) => {
-      const compacted = compactContent(result.data.content, input.query, detail, "code");
-      return {
-        id: result.data.id,
-        className: result.data.className,
-        packageName: result.data.packageName,
-        methodName: result.data.methodName,
-        methodSignature: result.data.methodSignature,
-        content: compacted.value,
-        filePath: result.data.filePath,
-        lineStart: result.data.lineStart,
-        lineEnd: result.data.lineEnd,
-        score: result.score,
-        matchReasons,
-        truncated: compacted.truncated,
-        detail,
-      };
-    });
-
-    return { success: true, data: setCachedToolResponse(searchCodeTool.name, cacheInput, data, context) };
+    return { success: true, data };
   },
 };
 
@@ -132,7 +81,6 @@ export function formatCodeResults(results: CodeSearchResult[]): string {
 **File:** ${fullPath}:${r.lineStart}-${r.lineEnd}
 **Signature:** \`${r.methodSignature}\`
 **Relevance:** ${(r.score * 100).toFixed(1)}%
-    ${r.matchReasons && r.matchReasons.length > 0 ? `**Why it matched:** ${r.matchReasons.join("; ")}\n` : ""}${r.truncated ? "**Payload:** excerpted for token efficiency\n" : ""}
 
 \`\`\`java
 ${r.content}
