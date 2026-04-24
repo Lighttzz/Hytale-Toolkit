@@ -69,8 +69,17 @@ export async function createTable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table
-  await db.createTable(tableName, data);
+  // Create new table and build ANN index for large tables
+  const newTable = await db.createTable(tableName, data);
+  if (data.length >= 2048) {
+    try {
+      await newTable.createIndex("vector", {
+        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
+      });
+    } catch {
+      // Non-fatal: fall back to full scan if index creation fails
+    }
+  }
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
@@ -233,8 +242,17 @@ export async function createGameDataTable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table
-  await db.createTable(tableName, data);
+  // Create new table and build ANN index for large tables
+  const newTable = await db.createTable(tableName, data);
+  if (data.length >= 2048) {
+    try {
+      await newTable.createIndex("vector", {
+        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
+      });
+    } catch {
+      // Non-fatal: fall back to full scan if index creation fails
+    }
+  }
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
@@ -445,8 +463,17 @@ export async function createClientUITable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table
-  await db.createTable(tableName, data);
+  // Create new table and build ANN index for large tables
+  const newTable = await db.createTable(tableName, data);
+  if (data.length >= 2048) {
+    try {
+      await newTable.createIndex("vector", {
+        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
+      });
+    } catch {
+      // Non-fatal: fall back to full scan if index creation fails
+    }
+  }
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
@@ -583,8 +610,17 @@ export async function createDocsTable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table
-  await db.createTable(tableName, data);
+  // Create new table and build ANN index for large tables
+  const newTable = await db.createTable(tableName, data);
+  if (data.length >= 2048) {
+    try {
+      await newTable.createIndex("vector", {
+        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
+      });
+    } catch {
+      // Non-fatal: fall back to full scan if index creation fails
+    }
+  }
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 

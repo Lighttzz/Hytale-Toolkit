@@ -24,7 +24,8 @@ const VOYAGE_RERANK_MAX_DOCS = 50;
 
 export interface RerankItem {
   index: number;
-  relevanceScore: number;
+  /** Voyage API returns snake_case JSON */
+  relevance_score: number;
 }
 
 interface VoyageRerankResponse {
@@ -113,6 +114,6 @@ export async function rerankResults<T extends { score: number }>(
   // Build reordered list with updated scores
   return ranked.map((item) => ({
     ...results[item.index],
-    score: item.relevanceScore,
+    score: item.relevance_score,
   }));
 }
