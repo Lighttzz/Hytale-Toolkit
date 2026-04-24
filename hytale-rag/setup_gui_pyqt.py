@@ -7141,6 +7141,10 @@ class SetupWizard(QMainWindow):
                 page.start_install()
             elif isinstance(page, DatabasePage):
                 page.start_download()
+                # Local DB apply is synchronous — if it completed, navigate immediately
+                if page.get_state() == "completed":
+                    if self.current_page < len(self.pages) - 1:
+                        self.show_page(self.current_page + 1)
             elif isinstance(page, IntegrationPage):
                 page.run_internal_action()
             return

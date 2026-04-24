@@ -59,6 +59,9 @@ const MAX_RETRIES = 6;
 const MAX_CHARS_CODE = 32000;
 const MAX_CHARS_TEXT = 16000;
 
+/** Max entries in the query-vector LRU cache. Sized for a long MCP session. */
+const QUERY_CACHE_MAX = 512;
+
 /**
  * Voyage AI response format
  */
@@ -85,6 +88,9 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
   private models: { code: string; text: string };
   private batchSize: number;
   private dispatcher: Dispatcher | undefined;
+
+  /** LRU cache for single-query embeddings (MCP sessions repeat the same queries often) */
+  private queryCache = new Map<string, number[]>();
 
   constructor(config: EmbeddingProviderConfig) {
     if (!config.apiKey) {
@@ -204,11 +210,29 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
   }
 
   /**
-   * Embed a single query
+   * Embed a single query (cached — MCP sessions often repeat the same queries).
    */
   async embedQuery(text: string, purpose: EmbeddingPurpose): Promise<number[]> {
+    const cacheKey = `${purpose}:${text}`;
+    const cached = this.queryCache.get(cacheKey);
+    if (cached) {
+      // Move to end (LRU: most recently used)
+      this.queryCache.delete(cacheKey);
+      this.queryCache.set(cacheKey, cached);
+      return cached;
+    }
+
     const result = await this.embedBatch([text], { purpose, mode: "query" });
-    return result.vectors[0];
+    const vector = result.vectors[0];
+
+    // Evict the oldest entry when the cache is full
+    if (this.queryCache.size >= QUERY_CACHE_MAX) {
+      const oldestKey = this.queryCache.keys().next().value!;
+      this.queryCache.delete(oldestKey);
+    }
+    this.queryCache.set(cacheKey, vector);
+
+    return vector;
   }
 
   /**

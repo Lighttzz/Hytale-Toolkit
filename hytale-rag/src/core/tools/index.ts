@@ -26,6 +26,12 @@ export interface ToolContext {
   configError?: string;
   /** Version checker for update notifications */
   versionChecker?: VersionChecker;
+  /**
+   * Voyage API key for optional reranking.
+   * When present, search tools use voyage-reranker to re-score results
+   * for significantly better precision.
+   */
+  rerankApiKey?: string;
 }
 
 /**

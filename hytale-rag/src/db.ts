@@ -352,7 +352,7 @@ export async function search(
   const db = await lancedb.connect(dbPath);
   const table = await db.openTable(tableName);
 
-  let query = table.vectorSearch(queryVector).limit(limit);
+  let query = table.vectorSearch(queryVector).distanceType("cosine").limit(limit);
 
   if (filter) {
     query = query.where(filter);
@@ -370,7 +370,8 @@ export async function search(
     filePath: row.filePath,
     lineStart: row.lineStart,
     lineEnd: row.lineEnd,
-    score: 1 - (row._distance || 0), // Convert distance to similarity score
+    // Cosine distance ∈ [0, 2]; map to similarity score ∈ [0, 1]
+    score: 1 - (row._distance || 0) / 2,
   }));
 }
 

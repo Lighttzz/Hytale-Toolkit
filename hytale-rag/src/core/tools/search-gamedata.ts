@@ -8,6 +8,7 @@ import { searchGameDataSchema, type SearchGameDataInput } from "../schemas.js";
 import type { ToolDefinition, ToolContext, ToolResult } from "./index.js";
 import type { GameDataSearchResult, GameDataType } from "../types.js";
 import { resolveGameDataPath } from "../../utils/paths.js";
+import { rerankResults } from "../../providers/embedding/voyage-reranker.js";
 
 /**
  * Search game data tool definition
@@ -41,15 +42,16 @@ export const searchGameDataTool: ToolDefinition<SearchGameDataInput, GameDataSea
         ? { type: input.type as GameDataType }
         : undefined;
 
-    // Search
+    // Search — fetch extra candidates when reranking
+    const fetchLimit = context.rerankApiKey ? Math.min(limit * 4, 20) : limit;
     const results = await context.vectorStore.search<GameDataSearchResult>(
       context.config.tables.gamedata,
       queryVector,
-      { limit, filter: typeFilter }
+      { limit: fetchLimit, filter: typeFilter }
     );
 
     // Map results
-    const data: GameDataSearchResult[] = results.map((r) => ({
+    let data: GameDataSearchResult[] = results.map((r) => ({
       id: r.data.id,
       type: r.data.type,
       name: r.data.name,
@@ -60,6 +62,21 @@ export const searchGameDataTool: ToolDefinition<SearchGameDataInput, GameDataSea
       parentId: r.data.parentId,
       score: r.score,
     }));
+
+    // Optional Voyage reranking
+    if (context.rerankApiKey && data.length > 0) {
+      try {
+        data = await rerankResults(
+          context.rerankApiKey,
+          input.query,
+          data,
+          (r) => `${r.name} (${r.type})\n\n${r.rawJson}`
+        );
+        data = data.slice(0, limit);
+      } catch {
+        data = data.slice(0, limit);
+      }
+    }
 
     return { success: true, data };
   },
