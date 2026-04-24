@@ -7,7 +7,6 @@
 import { searchDocsSchema, type SearchDocsInput } from "../schemas.js";
 import type { ToolDefinition, ToolContext, ToolResult } from "./index.js";
 import type { DocsSearchResult } from "../types.js";
-import { rerankResults } from "../../providers/embedding/voyage-reranker.js";
 
 /**
  * Search documentation tool definition
@@ -40,16 +39,15 @@ export const searchDocsTool: ToolDefinition<SearchDocsInput, DocsSearchResult[]>
       ? { type: input.type }
       : undefined;
 
-    // Search — fetch extra candidates when reranking
-    const fetchLimit = context.rerankApiKey ? Math.min(limit * 4, 20) : limit;
+    // Search
     const results = await context.vectorStore.search<DocsSearchResult>(
       context.config.tables.docs,
       queryVector,
-      { limit: fetchLimit, filter }
+      { limit, filter }
     );
 
     // Map results
-    let data: DocsSearchResult[] = results.map((r) => ({
+    const data: DocsSearchResult[] = results.map((r) => ({
       id: r.data.id,
       type: r.data.type,
       title: r.data.title,
@@ -60,21 +58,6 @@ export const searchDocsTool: ToolDefinition<SearchDocsInput, DocsSearchResult[]>
       description: r.data.description,
       score: r.score,
     }));
-
-    // Optional Voyage reranking
-    if (context.rerankApiKey && data.length > 0) {
-      try {
-        data = await rerankResults(
-          context.rerankApiKey,
-          input.query,
-          data,
-          (r) => `${r.title}\n\n${r.content}`
-        );
-        data = data.slice(0, limit);
-      } catch {
-        data = data.slice(0, limit);
-      }
-    }
 
     return { success: true, data };
   },

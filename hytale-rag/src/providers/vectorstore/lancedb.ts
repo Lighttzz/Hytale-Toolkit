@@ -15,25 +15,6 @@ import {
   VectorStoreProgressCallback,
 } from "./interface.js";
 
-/**
- * Number of IVF partitions for ANN index.
- * Rule of thumb: sqrt(num_rows). Raised to 256 as a safe default for tables
- * with tens-of-thousands of rows (38k code, 29k gamedata).
- */
-const ANN_NUM_PARTITIONS = 256;
-
-/**
- * Number of PQ sub-vectors for ANN index (must evenly divide embedding dims).
- * For 1024-d Voyage embeddings: 1024 / 8 = 128.
- */
-const ANN_NUM_SUB_VECTORS = 128;
-
-/**
- * Minimum row count before creating an ANN index.
- * IVF-PQ requires at least 256 training points per partition.
- */
-const ANN_MIN_ROWS = ANN_NUM_PARTITIONS * 8;
-
 /** Default batch size for queries */
 const DEFAULT_BATCH_SIZE = 5000;
 
@@ -122,21 +103,7 @@ export class LanceDBVectorStore implements VectorStore {
     await this.dropTable(tableName);
 
     // Create new table with data
-    const newTable = await db.createTable(tableName, data);
-
-    // Build an ANN index if the table is large enough
-    if (data.length >= ANN_MIN_ROWS) {
-      try {
-        await newTable.createIndex("vector", {
-          config: lancedb.Index.ivfPq({
-            numPartitions: ANN_NUM_PARTITIONS,
-            numSubVectors: ANN_NUM_SUB_VECTORS,
-          }),
-        });
-      } catch {
-        // Non-fatal: fall back to flat scan if index creation fails
-      }
-    }
+    await db.createTable(tableName, data);
 
     if (onProgress) {
       onProgress(records.length, records.length);
@@ -175,10 +142,7 @@ export class LanceDBVectorStore implements VectorStore {
     const table = await db.openTable(tableName);
 
     // Use query().nearestTo() pattern for better filter support
-    let query = table.query().nearestTo(queryVector)
-      // Cosine distance matches Voyage unit-normalized embeddings.
-      // _distance ∈ [0, 2]; convert to score via (1 - d/2) → [1, 0].
-      .distanceType("cosine");
+    let query = table.query().nearestTo(queryVector);
 
     // Apply filter if provided - use prefilter (where) for accurate filtering
     if (options.filter) {
@@ -197,9 +161,9 @@ export class LanceDBVectorStore implements VectorStore {
 
     for (const row of results) {
       const rowData = row as Record<string, unknown>;
-      // Cosine distance ∈ [0, 2]; map to similarity score ∈ [0, 1]
+      // Convert distance to score (LanceDB uses L2 distance, lower is better)
       const distance = rowData._distance as number | undefined;
-      const score = distance != null ? 1 - distance / 2 : 1;
+      const score = distance != null ? 1 - distance : 1;
 
       // Apply minimum score filter
       if (options.minScore !== undefined && score < options.minScore) {

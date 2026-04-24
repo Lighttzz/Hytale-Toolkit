@@ -24,7 +24,6 @@ import { clientCodeStatsTool } from "./core/tools/client-code-stats.js";
 import { gameDataStatsTool } from "./core/tools/gamedata-stats.js";
 import { docsStatsTool } from "./core/tools/docs-stats.js";
 import { indexHealthTool } from "./core/tools/index-health.js";
-import { searchKnowledgeTool } from "./core/tools/retrieval.js";
 import { startMCPServer } from "./servers/mcp/index.js";
 import { createRESTServer, startRESTServer } from "./servers/rest/index.js";
 import { createOpenAIServer, startOpenAIServer } from "./servers/openai/index.js";
@@ -344,7 +343,6 @@ async function main() {
   registry.register(gameDataStatsTool);
   registry.register(docsStatsTool);
   registry.register(indexHealthTool);
-  registry.register(searchKnowledgeTool);
   logger.info(`Registered ${registry.getAll().length} tools: ${registry.getAll().map(t => t.name).join(", ")}`);
 
   // Initialize version checker (non-blocking background check)
@@ -362,11 +360,6 @@ async function main() {
     config,
     configError,
     versionChecker,
-    // Pass the Voyage API key for optional reranking (only when using Voyage provider)
-    rerankApiKey:
-      config.embedding.provider === "voyage"
-        ? (process.env.VOYAGE_API_KEY ?? config.embedding.apiKey)
-        : undefined,
   };
 
   const { mode, host, port } = config.server;

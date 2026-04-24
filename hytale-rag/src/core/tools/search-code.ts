@@ -8,7 +8,6 @@ import { searchCodeSchema, type SearchCodeInput } from "../schemas.js";
 import type { ToolDefinition, ToolContext, ToolResult } from "./index.js";
 import type { CodeSearchResult } from "../types.js";
 import { resolveCodePath } from "../../utils/paths.js";
-import { rerankResults } from "../../providers/embedding/voyage-reranker.js";
 
 /**
  * Search code tool definition
@@ -41,16 +40,15 @@ export const searchCodeTool: ToolDefinition<SearchCodeInput, CodeSearchResult[]>
       ? { className: input.classFilter }
       : undefined;
 
-    // Search — fetch extra candidates when reranking so it has more to work with
-    const fetchLimit = context.rerankApiKey ? Math.min(limit * 4, 20) : limit;
+    // Search
     const results = await context.vectorStore.search<CodeSearchResult>(
       context.config.tables.code,
       queryVector,
-      { limit: fetchLimit, filter }
+      { limit, filter }
     );
 
     // Map results
-    let data: CodeSearchResult[] = results.map((r) => ({
+    const data: CodeSearchResult[] = results.map((r) => ({
       id: r.data.id,
       className: r.data.className,
       packageName: r.data.packageName,
@@ -62,22 +60,6 @@ export const searchCodeTool: ToolDefinition<SearchCodeInput, CodeSearchResult[]>
       lineEnd: r.data.lineEnd,
       score: r.score,
     }));
-
-    // Optional Voyage reranking for higher precision
-    if (context.rerankApiKey && data.length > 0) {
-      try {
-        data = await rerankResults(
-          context.rerankApiKey,
-          input.query,
-          data,
-          (r) => `${r.methodSignature}\n\n${r.content}`
-        );
-        data = data.slice(0, limit);
-      } catch {
-        // Non-fatal: keep ANN results if reranking fails
-        data = data.slice(0, limit);
-      }
-    }
 
     return { success: true, data };
   },

@@ -69,17 +69,8 @@ export async function createTable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table and build ANN index for large tables
-  const newTable = await db.createTable(tableName, data);
-  if (data.length >= 2048) {
-    try {
-      await newTable.createIndex("vector", {
-        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
-      });
-    } catch {
-      // Non-fatal: fall back to full scan if index creation fails
-    }
-  }
+  // Create new table
+  await db.createTable(tableName, data);
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
@@ -242,17 +233,8 @@ export async function createGameDataTable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table and build ANN index for large tables
-  const newTable = await db.createTable(tableName, data);
-  if (data.length >= 2048) {
-    try {
-      await newTable.createIndex("vector", {
-        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
-      });
-    } catch {
-      // Non-fatal: fall back to full scan if index creation fails
-    }
-  }
+  // Create new table
+  await db.createTable(tableName, data);
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
@@ -370,7 +352,7 @@ export async function search(
   const db = await lancedb.connect(dbPath);
   const table = await db.openTable(tableName);
 
-  let query = table.vectorSearch(queryVector).distanceType("cosine").limit(limit);
+  let query = table.vectorSearch(queryVector).limit(limit);
 
   if (filter) {
     query = query.where(filter);
@@ -388,8 +370,7 @@ export async function search(
     filePath: row.filePath,
     lineStart: row.lineStart,
     lineEnd: row.lineEnd,
-    // Cosine distance ∈ [0, 2]; map to similarity score ∈ [0, 1]
-    score: 1 - (row._distance || 0) / 2,
+    score: 1 - (row._distance || 0), // Convert distance to similarity score
   }));
 }
 
@@ -463,17 +444,8 @@ export async function createClientUITable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table and build ANN index for large tables
-  const newTable = await db.createTable(tableName, data);
-  if (data.length >= 2048) {
-    try {
-      await newTable.createIndex("vector", {
-        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
-      });
-    } catch {
-      // Non-fatal: fall back to full scan if index creation fails
-    }
-  }
+  // Create new table
+  await db.createTable(tableName, data);
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
@@ -610,17 +582,8 @@ export async function createDocsTable(
     // Table doesn't exist, that's fine
   }
 
-  // Create new table and build ANN index for large tables
-  const newTable = await db.createTable(tableName, data);
-  if (data.length >= 2048) {
-    try {
-      await newTable.createIndex("vector", {
-        config: lancedb.Index.ivfPq({ numPartitions: 256, numSubVectors: 128 }),
-      });
-    } catch {
-      // Non-fatal: fall back to full scan if index creation fails
-    }
-  }
+  // Create new table
+  await db.createTable(tableName, data);
   console.log(`  Created table '${tableName}' with ${data.length} rows`);
 }
 
